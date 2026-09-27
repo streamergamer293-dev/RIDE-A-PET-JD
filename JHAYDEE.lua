@@ -144,17 +144,17 @@ end
 --==============================================================
 
 local Colors = {
-    Background   = Color3.fromRGB(18, 18, 24),
-    Surface      = Color3.fromRGB(28, 28, 36),
-    SurfaceAlt   = Color3.fromRGB(35, 35, 45),
-    Border       = Color3.fromRGB(55, 55, 70),
-    Accent       = Color3.fromRGB(120, 90, 255),
-    AccentSoft   = Color3.fromRGB(90, 70, 200),
-    Text         = Color3.fromRGB(240, 240, 250),
-    TextDim      = Color3.fromRGB(160, 160, 180),
-    Success      = Color3.fromRGB(70, 180, 110),
-    Danger       = Color3.fromRGB(200, 70, 80),
-    Info         = Color3.fromRGB(80, 130, 220),
+    Background   = Color3.fromRGB(6, 10, 22),
+    Surface      = Color3.fromRGB(10, 18, 38),
+    SurfaceAlt   = Color3.fromRGB(14, 28, 55),
+    Border       = Color3.fromRGB(0, 180, 255),
+    Accent       = Color3.fromRGB(0, 200, 255),
+    AccentSoft   = Color3.fromRGB(0, 140, 220),
+    Text         = Color3.fromRGB(220, 245, 255),
+    TextDim      = Color3.fromRGB(120, 180, 220),
+    Success      = Color3.fromRGB(0, 230, 180),
+    Danger       = Color3.fromRGB(255, 60, 100),
+    Info         = Color3.fromRGB(0, 170, 255),
 }
 
 
@@ -176,8 +176,8 @@ ScreenGui.Parent = PlayerGui
 
 local ToggleBtn = Instance.new("TextButton")
 ToggleBtn.Name = "ToggleButton"
-ToggleBtn.Size = UDim2.new(0, 48, 0, 48)
-ToggleBtn.Position = UDim2.new(0, 20, 0.5, -24)
+ToggleBtn.Size = UDim2.new(0, 46, 0, 46)
+ToggleBtn.Position = UDim2.new(0, 18, 0.28, 0)
 ToggleBtn.AnchorPoint = Vector2.new(0, 0.5)
 ToggleBtn.BackgroundColor3 = Colors.Accent
 ToggleBtn.Text = "J"
@@ -192,9 +192,9 @@ ToggleCorner.CornerRadius = UDim.new(0, 14)
 ToggleCorner.Parent = ToggleBtn
 
 local ToggleStroke = Instance.new("UIStroke")
-ToggleStroke.Color = Color3.fromRGB(160, 130, 255)
-ToggleStroke.Thickness = 1.5
-ToggleStroke.Transparency = 0.4
+ToggleStroke.Color = Color3.fromRGB(0, 220, 255)
+ToggleStroke.Thickness = 2
+ToggleStroke.Transparency = 0.25
 ToggleStroke.Parent = ToggleBtn
 
 
@@ -204,7 +204,7 @@ ToggleStroke.Parent = ToggleBtn
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.new(0, 340, 0, 460)
+Main.Size = UDim2.new(0, 300, 0, 400)
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
 Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 Main.BackgroundColor3 = Colors.Background
@@ -214,7 +214,7 @@ Main.Visible = true
 Main.Parent = ScreenGui
 
 local MainScale = Instance.new("UIScale")
-MainScale.Scale = 0.95
+MainScale.Scale = 0.92
 MainScale.Parent = Main
 
 local MainCorner = Instance.new("UICorner")
@@ -223,8 +223,8 @@ MainCorner.Parent = Main
 
 local MainStroke = Instance.new("UIStroke")
 MainStroke.Color = Colors.Border
-MainStroke.Thickness = 1.2
-MainStroke.Transparency = 0.3
+MainStroke.Thickness = 1.8
+MainStroke.Transparency = 0.15
 MainStroke.Parent = Main
 
 
@@ -233,7 +233,7 @@ MainStroke.Parent = Main
 --==============================================================
 
 local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, 0, 0, 50)
+TopBar.Size = UDim2.new(1, 0, 0, 46)
 TopBar.BackgroundColor3 = Colors.Surface
 TopBar.BorderSizePixel = 0
 TopBar.Parent = Main
@@ -293,8 +293,8 @@ CloseCorner.Parent = Close
 --==============================================================
 
 local GlobalToggle = Instance.new("TextButton")
-GlobalToggle.Size = UDim2.new(0, 105, 0, 34)
-GlobalToggle.Position = UDim2.new(0, 12, 0, 62)
+GlobalToggle.Size = UDim2.new(0, 92, 0, 32)
+GlobalToggle.Position = UDim2.new(0, 10, 0, 58)
 GlobalToggle.BackgroundColor3 = Colors.Success
 GlobalToggle.Text = "ESP  •  ON"
 GlobalToggle.TextColor3 = Color3.new(1, 1, 1)
@@ -308,8 +308,8 @@ GlobalCorner.CornerRadius = UDim.new(0, 8)
 GlobalCorner.Parent = GlobalToggle
 
 local PlotTP = Instance.new("TextButton")
-PlotTP.Size = UDim2.new(0, 105, 0, 34)
-PlotTP.Position = UDim2.new(0, 125, 0, 62)
+PlotTP.Size = UDim2.new(0, 92, 0, 32)
+PlotTP.Position = UDim2.new(0, 108, 0, 58)
 PlotTP.BackgroundColor3 = Colors.Info
 PlotTP.Text = "My Plot"
 PlotTP.TextColor3 = Color3.new(1, 1, 1)
@@ -323,8 +323,8 @@ PlotTPCorner.CornerRadius = UDim.new(0, 8)
 PlotTPCorner.Parent = PlotTP
 
 local CountLabel = Instance.new("TextLabel")
-CountLabel.Size = UDim2.new(0, 90, 0, 34)
-CountLabel.Position = UDim2.new(1, -102, 0, 62)
+CountLabel.Size = UDim2.new(0, 80, 0, 32)
+CountLabel.Position = UDim2.new(1, -90, 0, 58)
 CountLabel.BackgroundColor3 = Colors.SurfaceAlt
 CountLabel.Text = "Egg: 0"
 CountLabel.TextColor3 = Colors.Text
@@ -342,8 +342,8 @@ CountCorner.Parent = CountLabel
 --==============================================================
 
 local SearchBox = Instance.new("Frame")
-SearchBox.Size = UDim2.new(1, -24, 0, 36)
-SearchBox.Position = UDim2.new(0, 12, 0, 106)
+SearchBox.Size = UDim2.new(1, -20, 0, 34)
+SearchBox.Position = UDim2.new(0, 10, 0, 98)
 SearchBox.BackgroundColor3 = Colors.Surface
 SearchBox.BorderSizePixel = 0
 SearchBox.Parent = Main
@@ -381,8 +381,8 @@ Search.Parent = SearchBox
 --==============================================================
 
 local List = Instance.new("ScrollingFrame")
-List.Size = UDim2.new(1, -24, 0, 260)
-List.Position = UDim2.new(0, 12, 0, 150)
+List.Size = UDim2.new(1, -20, 0, 220)
+List.Position = UDim2.new(0, 10, 0, 140)
 List.BackgroundColor3 = Colors.Surface
 List.BorderSizePixel = 0
 List.ClipsDescendants = true
@@ -420,8 +420,8 @@ end)
 --==============================================================
 
 local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(1, -24, 0, 34)
-Status.Position = UDim2.new(0, 12, 0, 420)
+Status.Size = UDim2.new(1, -20, 0, 32)
+Status.Position = UDim2.new(0, 10, 0, 368)
 Status.BackgroundColor3 = Colors.Surface
 Status.Font = Enum.Font.Gotham
 Status.TextSize = 11
@@ -731,7 +731,7 @@ local function createEggEntry(model)
     local Row = Instance.new("Frame")
     Row.Name = "Egg"
     Row.Size = UDim2.new(1, -4, 0, 28)
-    Row.BackgroundColor3 = Color3.fromRGB(32, 32, 42)
+    Row.BackgroundColor3 = Color3.fromRGB(12, 24, 48)
     Row.BorderSizePixel = 0
     Row.Parent = group.Container
 
