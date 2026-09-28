@@ -48,7 +48,7 @@ local GRAB_WAIT = 0.08
 local PLOT_WAIT = 0.12
 local GRAB_HEIGHT = 2
 local GRAB_SPAM = 12
-local TWIN_SPAM = 1000
+local TWIN_SPAM = 60
 local TWIN_SETTLE = 0.15 -- stay on egg a bit so server accepts claim before leaving
 
 
@@ -1565,11 +1565,16 @@ tryTwinOnEgg = function(eggModel)
         return false, "Egg gone"
     end
 
-    setFarmStatus("TWIN x" .. TWIN_SPAM .. " (no TP)")
+    -- Smooth Twin: controlled frame-rate interaction instead of 1000 instant calls.
+    local TWIN_DURATION = 2.5
+    local TWIN_RATE = 60
+    local TWIN_INTERVAL = 1 / TWIN_RATE
+
+    setFarmStatus("SMOOTH TWIN 60 FPS (no TP)")
 
     local prompts, clicks = collectPrompts(eggModel)
 
-    -- Twin-named interacts only on plot (no TP — only if already usable)
+    -- Only collect Twin/merge/claim/collect prompts from the player's plot.
     local plot = getMyPlot()
     if plot then
         for _, desc in ipairs(plot:GetDescendants()) do
@@ -1581,47 +1586,60 @@ tryTwinOnEgg = function(eggModel)
         end
     end
 
-    fireTwinRemotes(eggModel)
+    local startTime = os.clock()
+    local nextTick = startTime
+    local ticks = 0
 
-    for i = 1, TWIN_SPAM do
-        if not eggModel.Parent then
-            break
-        end
+    while eggModel.Parent and (os.clock() - startTime) < TWIN_DURATION do
+        local now = os.clock()
 
-        for _, prompt in ipairs(prompts) do
-            pcall(function()
-                if fireproximityprompt then
-                    fireproximityprompt(prompt, 0)
-                else
-                    prompt:InputHoldBegin()
-                    prompt:InputHoldEnd()
+        if now >= nextTick then
+            -- Keep the loop synchronized to a steady 60 Hz instead of a huge burst.
+            nextTick = now + TWIN_INTERVAL
+            ticks += 1
+
+            for _, prompt in ipairs(prompts) do
+                if prompt and prompt.Parent and prompt.Enabled ~= false then
+                    pcall(function()
+                        if fireproximityprompt then
+                            fireproximityprompt(prompt, 0)
+                        else
+                            prompt:InputHoldBegin()
+                            prompt:InputHoldEnd()
+                        end
+                    end)
                 end
-            end)
-        end
-        for _, detector in ipairs(clicks) do
-            pcall(function()
-                if fireclickdetector then
-                    fireclickdetector(detector)
+            end
+
+            for _, detector in ipairs(clicks) do
+                if detector and detector.Parent then
+                    pcall(function()
+                        if fireclickdetector then
+                            fireclickdetector(detector)
+                        end
+                    end)
                 end
-            end)
+            end
+
+            -- Periodic grab keeps the interaction alive without burst-spamming.
+            if ticks % 10 == 0 then
+                pcall(function()
+                    tryGrabEgg(eggModel)
+                end)
+            end
         end
 
-        if i % 25 == 0 then
-            tryGrabEgg(eggModel)
-            fireTwinRemotes(eggModel)
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            end)
-            task.wait()
-        end
+        task.wait()
     end
 
+    -- One final interaction pass when the smooth cycle finishes.
     if eggModel.Parent then
-        tryGrabEgg(eggModel)
+        pcall(function()
+            tryGrabEgg(eggModel)
+        end)
     end
 
-    return true, "Twin done (no TP)"
+    return true, "Smooth Twin done"
 end
 
 -- TP mode = teleport home | Twin mode = twin only (NO teleport)
