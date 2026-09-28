@@ -60,6 +60,7 @@ local Running = true
 local GlobalESPEnabled = true
 local PanelVisible = true
 local CurrentTab = "ESP" -- "ESP" | "Farm"
+local FarmEggTab = "All" -- "All" | "Important"
 
 local AutoFarmEnabled = false
 local SelectedFarmEggs = {} -- [eggName] = true
@@ -72,6 +73,14 @@ local ESPs = {}
 local EggEntries = {}
 local EggGroups = {}
 local FarmRows = {} -- [eggName] = { Frame, Check, Label }
+local ImportantFarmRows = {}
+local ImportantEggs = {
+    ["Galaxy Egg"] = true,
+    ["Blackhole Egg"] = true,
+    ["Solaris Egg"] = true,
+    ["Cherub Egg"] = true,
+    ["Vulcanic Egg"] = true,
+}
 local Connections = {}
 
 local Character = nil
@@ -510,6 +519,41 @@ FarmPage.BackgroundTransparency = 1
 FarmPage.Visible = false
 FarmPage.Parent = Main
 
+local EggListTabs = Instance.new("Frame")
+EggListTabs.Size = UDim2.new(1, -20, 0, 28)
+EggListTabs.Position = UDim2.new(0, 10, 0, 68)
+EggListTabs.BackgroundTransparency = 1
+EggListTabs.Parent = FarmPage
+
+local EggListAllTab = Instance.new("TextButton")
+EggListAllTab.Size = UDim2.new(0.5, -3, 1, 0)
+EggListAllTab.Position = UDim2.new(0, 0, 0, 0)
+EggListAllTab.BackgroundColor3 = Colors.Accent
+EggListAllTab.Text = "All Eggs"
+EggListAllTab.TextColor3 = Color3.new(1, 1, 1)
+EggListAllTab.Font = Enum.Font.GothamBold
+EggListAllTab.TextSize = 11
+EggListAllTab.AutoButtonColor = false
+EggListAllTab.Parent = EggListTabs
+local EggListAllCorner = Instance.new("UICorner")
+EggListAllCorner.CornerRadius = UDim.new(0, 7)
+EggListAllCorner.Parent = EggListAllTab
+
+local EggListImportantTab = Instance.new("TextButton")
+EggListImportantTab.Size = UDim2.new(0.5, -3, 1, 0)
+EggListImportantTab.Position = UDim2.new(0.5, 3, 0, 0)
+EggListImportantTab.BackgroundColor3 = Colors.SurfaceAlt
+EggListImportantTab.Text = "Important Eggs"
+EggListImportantTab.TextColor3 = Colors.Text
+EggListImportantTab.Font = Enum.Font.GothamBold
+EggListImportantTab.TextSize = 11
+EggListImportantTab.AutoButtonColor = false
+EggListImportantTab.Parent = EggListTabs
+local EggListImportantCorner = Instance.new("UICorner")
+EggListImportantCorner.CornerRadius = UDim.new(0, 7)
+EggListImportantCorner.Parent = EggListImportantTab
+
+
 local FarmToggle = Instance.new("TextButton")
 FarmToggle.Size = UDim2.new(0, 120, 0, 30)
 FarmToggle.Position = UDim2.new(0, 10, 0, 0)
@@ -613,18 +657,18 @@ end
 
 local FarmHint = Instance.new("TextLabel")
 FarmHint.Size = UDim2.new(1, -20, 0, 18)
-FarmHint.Position = UDim2.new(0, 10, 0, 66)
+FarmHint.Position = UDim2.new(0, 10, 0, 98)
 FarmHint.BackgroundTransparency = 1
 FarmHint.Font = Enum.Font.Gotham
 FarmHint.TextSize = 10
 FarmHint.TextColor3 = Colors.TextDim
 FarmHint.TextXAlignment = Enum.TextXAlignment.Left
-FarmHint.Text = "TP = teleport home  |  Twin = twin on egg (NO tp)"
+FarmHint.Text = "Important Eggs auto-farm on spawn  |  TP / Twin mode below"
 FarmHint.Parent = FarmPage
 
 local FarmList = Instance.new("ScrollingFrame")
 FarmList.Size = UDim2.new(1, -20, 0, 240)
-FarmList.Position = UDim2.new(0, 10, 0, 86)
+FarmList.Position = UDim2.new(0, 10, 0, 120)
 FarmList.BackgroundColor3 = Colors.Surface
 FarmList.BorderSizePixel = 0
 FarmList.ClipsDescendants = true
@@ -655,6 +699,51 @@ FarmListLayout.Parent = FarmList
 FarmListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     FarmList.CanvasSize = UDim2.new(0, 0, 0, FarmListLayout.AbsoluteContentSize.Y + 12)
 end)
+
+local ImportantFarmList = Instance.new("ScrollingFrame")
+ImportantFarmList.Size = UDim2.new(1, -20, 0, 240)
+ImportantFarmList.Position = UDim2.new(0, 10, 0, 120)
+ImportantFarmList.BackgroundColor3 = Colors.Surface
+ImportantFarmList.BorderSizePixel = 0
+ImportantFarmList.ClipsDescendants = true
+ImportantFarmList.ScrollingDirection = Enum.ScrollingDirection.Y
+ImportantFarmList.ScrollBarThickness = 3
+ImportantFarmList.ScrollBarImageTransparency = 0.3
+ImportantFarmList.ScrollBarImageColor3 = Colors.Warning
+ImportantFarmList.CanvasSize = UDim2.new(0, 0, 0, 0)
+ImportantFarmList.AutomaticCanvasSize = Enum.AutomaticSize.None
+ImportantFarmList.Visible = false
+ImportantFarmList.Parent = FarmPage
+local ImportantListCorner = Instance.new("UICorner")
+ImportantListCorner.CornerRadius = UDim.new(0, 10)
+ImportantListCorner.Parent = ImportantFarmList
+local ImportantListPadding = Instance.new("UIPadding")
+ImportantListPadding.PaddingTop = UDim.new(0, 6)
+ImportantListPadding.PaddingBottom = UDim.new(0, 6)
+ImportantListPadding.PaddingLeft = UDim.new(0, 6)
+ImportantListPadding.PaddingRight = UDim.new(0, 6)
+ImportantListPadding.Parent = ImportantFarmList
+local ImportantListLayout = Instance.new("UIListLayout")
+ImportantListLayout.Padding = UDim.new(0, 4)
+ImportantListLayout.SortOrder = Enum.SortOrder.Name
+ImportantListLayout.Parent = ImportantFarmList
+ImportantListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    ImportantFarmList.CanvasSize = UDim2.new(0, 0, 0, ImportantListLayout.AbsoluteContentSize.Y + 12)
+end)
+
+local function setFarmEggTab(tab)
+    FarmEggTab = tab
+    local important = tab == "Important"
+    EggListAllTab.BackgroundColor3 = important and Colors.SurfaceAlt or Colors.Accent
+    EggListAllTab.TextColor3 = important and Colors.Text or Color3.new(1, 1, 1)
+    EggListImportantTab.BackgroundColor3 = important and Colors.Accent or Colors.SurfaceAlt
+    EggListImportantTab.TextColor3 = important and Color3.new(1, 1, 1) or Colors.Text
+    FarmList.Visible = not important
+    ImportantFarmList.Visible = important
+end
+
+EggListAllTab.MouseButton1Click:Connect(function() setFarmEggTab("All") end)
+EggListImportantTab.MouseButton1Click:Connect(function() setFarmEggTab("Important") end)
 
 local FarmStatus = Instance.new("TextLabel")
 FarmStatus.Size = UDim2.new(1, -20, 0, 28)
@@ -1083,16 +1172,18 @@ end
 --==============================================================
 
 local function updateFarmRowVisual(name)
-    local row = FarmRows[name]
+    local row = FarmRows[name] or ImportantFarmRows[name]
     if not row then return end
-    local selected = SelectedFarmEggs[name] == true
+    local selected = ImportantEggs[name] or SelectedFarmEggs[name] == true
     row.Check.Text = selected and "✓" or ""
     row.Check.BackgroundColor3 = selected and Colors.Success or Colors.SurfaceAlt
     row.Frame.BackgroundColor3 = selected and Color3.fromRGB(10, 40, 55) or Color3.fromRGB(12, 24, 48)
 end
 
-local function createFarmRow(name)
-    if FarmRows[name] then
+local function createFarmRow(name, importantOnly)
+    local rows = importantOnly and ImportantFarmRows or FarmRows
+    local parent = importantOnly and ImportantFarmList or FarmList
+    if rows[name] then
         updateFarmRowVisual(name)
         return
     end
@@ -1102,7 +1193,7 @@ local function createFarmRow(name)
     Row.Size = UDim2.new(1, -4, 0, 30)
     Row.BackgroundColor3 = Color3.fromRGB(12, 24, 48)
     Row.BorderSizePixel = 0
-    Row.Parent = FarmList
+    Row.Parent = parent
 
     local RowCorner = Instance.new("UICorner")
     RowCorner.CornerRadius = UDim.new(0, 6)
@@ -1118,7 +1209,6 @@ local function createFarmRow(name)
     Check.TextSize = 14
     Check.AutoButtonColor = false
     Check.Parent = Row
-
     local CheckCorner = Instance.new("UICorner")
     CheckCorner.CornerRadius = UDim.new(0, 6)
     CheckCorner.Parent = Check
@@ -1127,8 +1217,8 @@ local function createFarmRow(name)
     Label.Size = UDim2.new(1, -40, 1, 0)
     Label.Position = UDim2.new(0, 34, 0, 0)
     Label.BackgroundTransparency = 1
-    Label.Text = name
-    Label.TextColor3 = Colors.Text
+    Label.Text = importantOnly and "★ " .. name or name
+    Label.TextColor3 = importantOnly and Colors.Warning or Colors.Text
     Label.TextXAlignment = Enum.TextXAlignment.Left
     Label.Font = Enum.Font.Gotham
     Label.TextSize = 12
@@ -1136,10 +1226,15 @@ local function createFarmRow(name)
     Label.Parent = Row
 
     local function toggle()
-        if SelectedFarmEggs[name] then
-            SelectedFarmEggs[name] = nil
-        else
+        if importantOnly then
+            -- Important eggs are always included in Auto Farm.
             SelectedFarmEggs[name] = true
+        else
+            if SelectedFarmEggs[name] then
+                SelectedFarmEggs[name] = nil
+            else
+                SelectedFarmEggs[name] = true
+            end
         end
         updateFarmRowVisual(name)
     end
@@ -1152,22 +1247,24 @@ local function createFarmRow(name)
         end
     end)
 
-    FarmRows[name] = {
-        Frame = Row,
-        Check = Check,
-        Label = Label
-    }
+    rows[name] = { Frame = Row, Check = Check, Label = Label }
     updateFarmRowVisual(name)
 end
 
 refreshFarmList = function()
     for name in pairs(EggGroups) do
-        createFarmRow(name)
+        createFarmRow(name, false)
     end
-    -- also include any selected that might have disappeared (keep them)
+    for name in pairs(ImportantEggs) do
+        createFarmRow(name, true)
+        -- Important eggs are automatically included whenever Auto Farm is ON.
+        SelectedFarmEggs[name] = true
+    end
     for name in pairs(SelectedFarmEggs) do
-        createFarmRow(name)
+        createFarmRow(name, ImportantEggs[name] == true)
     end
+    for name in pairs(FarmRows) do updateFarmRowVisual(name) end
+    for name in pairs(ImportantFarmRows) do updateFarmRowVisual(name) end
 end
 
 
@@ -1687,12 +1784,14 @@ local function findFarmTarget()
 
     for model in pairs(EggEntries) do
         if model and model.Parent and model:IsDescendantOf(RenderedEggs) then
-            if SelectedFarmEggs[model.Name] then
+            if SelectedFarmEggs[model.Name] or ImportantEggs[model.Name] then
                 local root = getRootPart(model)
                 if root then
                     local dist = RootPart and (RootPart.Position - root.Position).Magnitude or 0
-                    if dist < bestDist then
-                        bestDist = dist
+                    local priority = ImportantEggs[model.Name] and 0 or 1
+                    local score = priority * 1000000 + dist
+                    if score < bestDist then
+                        bestDist = score
                         best = model
                     end
                 end
@@ -1831,10 +1930,13 @@ end)
 
 ClearBtn.MouseButton1Click:Connect(function()
     table.clear(SelectedFarmEggs)
-    for name in pairs(FarmRows) do
-        updateFarmRowVisual(name)
+    -- Important Eggs remain automatic even after Clear.
+    for name in pairs(ImportantEggs) do
+        SelectedFarmEggs[name] = true
     end
-    setFarmStatus("Selection cleared")
+    for name in pairs(FarmRows) do updateFarmRowVisual(name) end
+    for name in pairs(ImportantFarmRows) do updateFarmRowVisual(name) end
+    setFarmStatus("Normal selection cleared • Important Eggs stay ON")
 end)
 
 
