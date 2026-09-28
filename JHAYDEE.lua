@@ -1,27 +1,23 @@
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
 ║                         JHAYDEE                                  ║
-║              Rendered Eggs ESP + Teleport                        ║
+║         Rendered Eggs ESP + Teleport + Auto Farm                 ║
 ║                                                                  ║
 ║ • ESP all Models inside workspace.RenderedEggs                   ║
 ║ • Show name + distance at any range                              ║
-║ • Group Eggs by name                                             ║
-║ • Collapse / expand groups                                       ║
-║ • Global ESP ON/OFF                                              ║
-║ • Per-Egg-type ESP ON/OFF                                        ║
-║ • Search Eggs                                                    ║
-║ • Direct TP button for each Egg                                  ║
-║ • Newly spawned Eggs are detected automatically                  ║
-║ • Automatically find the LocalPlayer plot using Data.Owner       ║
-║ • workspace.Plots is scanned at most 2 times                     ║
-║ • TP 10 studs above the Egg / Baseplate                          ║
-║ • No script-side teleport distance limit                         ║
+║ • Group Eggs by name / collapse / search                         ║
+║ • Global + per-type ESP ON/OFF                                   ║
+║ • Direct TP to egg / My Plot                                     ║
+║ • AUTO FARM: multi-select egg types                              ║
+║ • Auto TP → Grab → Return to My Plot                             ║
+║ • Detects newly spawned eggs automatically                       ║
 ╚══════════════════════════════════════════════════════════════════╝
 ]]
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -47,6 +43,10 @@ local UPDATE_RATE = 0.20
 local HEIGHT_OFFSET = 10
 local SHOW_HIGHLIGHT = true
 
+local FARM_COOLDOWN = 1.8
+local GRAB_WAIT = 0.75
+local PLOT_WAIT = 0.6
+
 
 --==============================================================
 -- STATE
@@ -55,10 +55,18 @@ local SHOW_HIGHLIGHT = true
 local Running = true
 local GlobalESPEnabled = true
 local PanelVisible = true
+local CurrentTab = "ESP" -- "ESP" | "Farm"
+
+local AutoFarmEnabled = false
+local SelectedFarmEggs = {} -- [eggName] = true
+local FarmBusy = false
+local LastFarmAt = 0
+local FarmStatusText = "Idle"
 
 local ESPs = {}
 local EggEntries = {}
 local EggGroups = {}
+local FarmRows = {} -- [eggName] = { Frame, Check, Label }
 local Connections = {}
 
 local Character = nil
@@ -72,6 +80,8 @@ local MAX_PLOT_SCANS = 2
 local updateSearch = nil
 local getEggTopCFrame = nil
 local safeTeleport = nil
+local refreshFarmList = nil
+local setTab = nil
 
 
 --==============================================================
@@ -140,7 +150,7 @@ end
 
 
 --==============================================================
--- COLORS (modern dark theme)
+-- COLORS (neon blue)
 --==============================================================
 
 local Colors = {
@@ -155,6 +165,7 @@ local Colors = {
     Success      = Color3.fromRGB(0, 230, 180),
     Danger       = Color3.fromRGB(255, 60, 100),
     Info         = Color3.fromRGB(0, 170, 255),
+    Warning      = Color3.fromRGB(255, 190, 60),
 }
 
 
@@ -199,12 +210,12 @@ ToggleStroke.Parent = ToggleBtn
 
 
 --==============================================================
--- MAIN PANEL (smaller)
+-- MAIN PANEL
 --==============================================================
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.Size = UDim2.new(0, 300, 0, 400)
+Main.Size = UDim2.new(0, 310, 0, 470)
 Main.AnchorPoint = Vector2.new(0.5, 0.5)
 Main.Position = UDim2.new(0.5, 0, 0.5, 0)
 Main.BackgroundColor3 = Colors.Background
@@ -242,7 +253,6 @@ local TopCorner = Instance.new("UICorner")
 TopCorner.CornerRadius = UDim.new(0, 16)
 TopCorner.Parent = TopBar
 
--- Fix bottom corners of top bar
 local TopFix = Instance.new("Frame")
 TopFix.Size = UDim2.new(1, 0, 0, 16)
 TopFix.Position = UDim2.new(0, 0, 1, -16)
@@ -289,81 +299,125 @@ CloseCorner.Parent = Close
 
 
 --==============================================================
--- CONTROL BUTTONS
+-- TABS
 --==============================================================
 
+local TabBar = Instance.new("Frame")
+TabBar.Size = UDim2.new(1, -20, 0, 30)
+TabBar.Position = UDim2.new(0, 10, 0, 52)
+TabBar.BackgroundTransparency = 1
+TabBar.Parent = Main
+
+local TabESP = Instance.new("TextButton")
+TabESP.Size = UDim2.new(0.5, -4, 1, 0)
+TabESP.Position = UDim2.new(0, 0, 0, 0)
+TabESP.BackgroundColor3 = Colors.Accent
+TabESP.Text = "ESP"
+TabESP.TextColor3 = Color3.new(1, 1, 1)
+TabESP.Font = Enum.Font.GothamBold
+TabESP.TextSize = 12
+TabESP.AutoButtonColor = false
+TabESP.Parent = TabBar
+
+local TabESPCorner = Instance.new("UICorner")
+TabESPCorner.CornerRadius = UDim.new(0, 8)
+TabESPCorner.Parent = TabESP
+
+local TabFarm = Instance.new("TextButton")
+TabFarm.Size = UDim2.new(0.5, -4, 1, 0)
+TabFarm.Position = UDim2.new(0.5, 4, 0, 0)
+TabFarm.BackgroundColor3 = Colors.SurfaceAlt
+TabFarm.Text = "Auto Farm"
+TabFarm.TextColor3 = Colors.Text
+TabFarm.Font = Enum.Font.GothamBold
+TabFarm.TextSize = 12
+TabFarm.AutoButtonColor = false
+TabFarm.Parent = TabBar
+
+local TabFarmCorner = Instance.new("UICorner")
+TabFarmCorner.CornerRadius = UDim.new(0, 8)
+TabFarmCorner.Parent = TabFarm
+
+
+--==============================================================
+-- ESP PAGE
+--==============================================================
+
+local ESPPage = Instance.new("Frame")
+ESPPage.Name = "ESPPage"
+ESPPage.Size = UDim2.new(1, 0, 1, -92)
+ESPPage.Position = UDim2.new(0, 0, 0, 88)
+ESPPage.BackgroundTransparency = 1
+ESPPage.Visible = true
+ESPPage.Parent = Main
+
 local GlobalToggle = Instance.new("TextButton")
-GlobalToggle.Size = UDim2.new(0, 92, 0, 32)
-GlobalToggle.Position = UDim2.new(0, 10, 0, 58)
+GlobalToggle.Size = UDim2.new(0, 92, 0, 30)
+GlobalToggle.Position = UDim2.new(0, 10, 0, 0)
 GlobalToggle.BackgroundColor3 = Colors.Success
 GlobalToggle.Text = "ESP  •  ON"
 GlobalToggle.TextColor3 = Color3.new(1, 1, 1)
 GlobalToggle.Font = Enum.Font.GothamBold
 GlobalToggle.TextSize = 11
 GlobalToggle.AutoButtonColor = false
-GlobalToggle.Parent = Main
+GlobalToggle.Parent = ESPPage
 
 local GlobalCorner = Instance.new("UICorner")
 GlobalCorner.CornerRadius = UDim.new(0, 8)
 GlobalCorner.Parent = GlobalToggle
 
 local PlotTP = Instance.new("TextButton")
-PlotTP.Size = UDim2.new(0, 92, 0, 32)
-PlotTP.Position = UDim2.new(0, 108, 0, 58)
+PlotTP.Size = UDim2.new(0, 92, 0, 30)
+PlotTP.Position = UDim2.new(0, 108, 0, 0)
 PlotTP.BackgroundColor3 = Colors.Info
 PlotTP.Text = "My Plot"
 PlotTP.TextColor3 = Color3.new(1, 1, 1)
 PlotTP.Font = Enum.Font.GothamBold
 PlotTP.TextSize = 11
 PlotTP.AutoButtonColor = false
-PlotTP.Parent = Main
+PlotTP.Parent = ESPPage
 
 local PlotTPCorner = Instance.new("UICorner")
 PlotTPCorner.CornerRadius = UDim.new(0, 8)
 PlotTPCorner.Parent = PlotTP
 
 local CountLabel = Instance.new("TextLabel")
-CountLabel.Size = UDim2.new(0, 80, 0, 32)
-CountLabel.Position = UDim2.new(1, -90, 0, 58)
+CountLabel.Size = UDim2.new(0, 80, 0, 30)
+CountLabel.Position = UDim2.new(1, -90, 0, 0)
 CountLabel.BackgroundColor3 = Colors.SurfaceAlt
 CountLabel.Text = "Egg: 0"
 CountLabel.TextColor3 = Colors.Text
 CountLabel.Font = Enum.Font.GothamBold
 CountLabel.TextSize = 11
-CountLabel.Parent = Main
+CountLabel.Parent = ESPPage
 
 local CountCorner = Instance.new("UICorner")
 CountCorner.CornerRadius = UDim.new(0, 8)
 CountCorner.Parent = CountLabel
 
-
---==============================================================
--- SEARCH
---==============================================================
-
 local SearchBox = Instance.new("Frame")
-SearchBox.Size = UDim2.new(1, -20, 0, 34)
-SearchBox.Position = UDim2.new(0, 10, 0, 98)
+SearchBox.Size = UDim2.new(1, -20, 0, 32)
+SearchBox.Position = UDim2.new(0, 10, 0, 38)
 SearchBox.BackgroundColor3 = Colors.Surface
 SearchBox.BorderSizePixel = 0
-SearchBox.Parent = Main
+SearchBox.Parent = ESPPage
 
 local SearchCorner = Instance.new("UICorner")
-SearchCorner.CornerRadius = UDim.new(0, 9)
+SearchCorner.CornerRadius = UDim.new(0, 8)
 SearchCorner.Parent = SearchBox
 
 local SearchIcon = Instance.new("TextLabel")
-SearchIcon.Size = UDim2.new(0, 32, 1, 0)
+SearchIcon.Size = UDim2.new(0, 28, 1, 0)
 SearchIcon.BackgroundTransparency = 1
 SearchIcon.Text = "⌕"
 SearchIcon.TextColor3 = Colors.TextDim
 SearchIcon.Font = Enum.Font.GothamBold
-SearchIcon.TextSize = 16
+SearchIcon.TextSize = 15
 SearchIcon.Parent = SearchBox
 
 local Search = Instance.new("TextBox")
-Search.Position = UDim2.new(0, 32, 0, 0)
-Search.Size = UDim2.new(1, -38, 1, 0)
+Search.Position = UDim2.new(0, 28, 0, 0)
+Search.Size = UDim2.new(1, -34, 1, 0)
 Search.BackgroundTransparency = 1
 Search.TextColor3 = Colors.Text
 Search.PlaceholderColor3 = Colors.TextDim
@@ -375,14 +429,9 @@ Search.TextSize = 12
 Search.TextXAlignment = Enum.TextXAlignment.Left
 Search.Parent = SearchBox
 
-
---==============================================================
--- SCROLL LIST
---==============================================================
-
 local List = Instance.new("ScrollingFrame")
-List.Size = UDim2.new(1, -20, 0, 220)
-List.Position = UDim2.new(0, 10, 0, 140)
+List.Size = UDim2.new(1, -20, 0, 250)
+List.Position = UDim2.new(0, 10, 0, 78)
 List.BackgroundColor3 = Colors.Surface
 List.BorderSizePixel = 0
 List.ClipsDescendants = true
@@ -392,7 +441,7 @@ List.ScrollBarImageTransparency = 0.3
 List.ScrollBarImageColor3 = Colors.Accent
 List.CanvasSize = UDim2.new(0, 0, 0, 0)
 List.AutomaticCanvasSize = Enum.AutomaticSize.None
-List.Parent = Main
+List.Parent = ESPPage
 
 local ListCorner = Instance.new("UICorner")
 ListCorner.CornerRadius = UDim.new(0, 10)
@@ -414,14 +463,9 @@ ListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
     List.CanvasSize = UDim2.new(0, 0, 0, ListLayout.AbsoluteContentSize.Y + 12)
 end)
 
-
---==============================================================
--- STATUS
---==============================================================
-
 local Status = Instance.new("TextLabel")
-Status.Size = UDim2.new(1, -20, 0, 32)
-Status.Position = UDim2.new(0, 10, 0, 368)
+Status.Size = UDim2.new(1, -20, 0, 28)
+Status.Position = UDim2.new(0, 10, 1, -32)
 Status.BackgroundColor3 = Colors.Surface
 Status.Font = Enum.Font.Gotham
 Status.TextSize = 11
@@ -430,7 +474,7 @@ Status.TextYAlignment = Enum.TextYAlignment.Center
 Status.TextColor3 = Colors.TextDim
 Status.TextXAlignment = Enum.TextXAlignment.Left
 Status.Text = ""
-Status.Parent = Main
+Status.Parent = ESPPage
 
 local StatusCorner = Instance.new("UICorner")
 StatusCorner.CornerRadius = UDim.new(0, 8)
@@ -450,27 +494,184 @@ end
 
 
 --==============================================================
--- OPEN / CLOSE LOGIC
+-- FARM PAGE
+--==============================================================
+
+local FarmPage = Instance.new("Frame")
+FarmPage.Name = "FarmPage"
+FarmPage.Size = UDim2.new(1, 0, 1, -92)
+FarmPage.Position = UDim2.new(0, 0, 0, 88)
+FarmPage.BackgroundTransparency = 1
+FarmPage.Visible = false
+FarmPage.Parent = Main
+
+local FarmToggle = Instance.new("TextButton")
+FarmToggle.Size = UDim2.new(0, 120, 0, 30)
+FarmToggle.Position = UDim2.new(0, 10, 0, 0)
+FarmToggle.BackgroundColor3 = Colors.Danger
+FarmToggle.Text = "Farm  •  OFF"
+FarmToggle.TextColor3 = Color3.new(1, 1, 1)
+FarmToggle.Font = Enum.Font.GothamBold
+FarmToggle.TextSize = 11
+FarmToggle.AutoButtonColor = false
+FarmToggle.Parent = FarmPage
+
+local FarmToggleCorner = Instance.new("UICorner")
+FarmToggleCorner.CornerRadius = UDim.new(0, 8)
+FarmToggleCorner.Parent = FarmToggle
+
+local SelectAllBtn = Instance.new("TextButton")
+SelectAllBtn.Size = UDim2.new(0, 70, 0, 30)
+SelectAllBtn.Position = UDim2.new(0, 138, 0, 0)
+SelectAllBtn.BackgroundColor3 = Colors.Info
+SelectAllBtn.Text = "All"
+SelectAllBtn.TextColor3 = Color3.new(1, 1, 1)
+SelectAllBtn.Font = Enum.Font.GothamBold
+SelectAllBtn.TextSize = 11
+SelectAllBtn.AutoButtonColor = false
+SelectAllBtn.Parent = FarmPage
+
+local SelectAllCorner = Instance.new("UICorner")
+SelectAllCorner.CornerRadius = UDim.new(0, 8)
+SelectAllCorner.Parent = SelectAllBtn
+
+local ClearBtn = Instance.new("TextButton")
+ClearBtn.Size = UDim2.new(0, 70, 0, 30)
+ClearBtn.Position = UDim2.new(1, -80, 0, 0)
+ClearBtn.BackgroundColor3 = Colors.SurfaceAlt
+ClearBtn.Text = "Clear"
+ClearBtn.TextColor3 = Colors.Text
+ClearBtn.Font = Enum.Font.GothamBold
+ClearBtn.TextSize = 11
+ClearBtn.AutoButtonColor = false
+ClearBtn.Parent = FarmPage
+
+local ClearCorner = Instance.new("UICorner")
+ClearCorner.CornerRadius = UDim.new(0, 8)
+ClearCorner.Parent = ClearBtn
+
+local FarmHint = Instance.new("TextLabel")
+FarmHint.Size = UDim2.new(1, -20, 0, 20)
+FarmHint.Position = UDim2.new(0, 10, 0, 36)
+FarmHint.BackgroundTransparency = 1
+FarmHint.Font = Enum.Font.Gotham
+FarmHint.TextSize = 10
+FarmHint.TextColor3 = Colors.TextDim
+FarmHint.TextXAlignment = Enum.TextXAlignment.Left
+FarmHint.Text = "Select egg types to auto farm (multi-select)"
+FarmHint.Parent = FarmPage
+
+local FarmList = Instance.new("ScrollingFrame")
+FarmList.Size = UDim2.new(1, -20, 0, 270)
+FarmList.Position = UDim2.new(0, 10, 0, 58)
+FarmList.BackgroundColor3 = Colors.Surface
+FarmList.BorderSizePixel = 0
+FarmList.ClipsDescendants = true
+FarmList.ScrollingDirection = Enum.ScrollingDirection.Y
+FarmList.ScrollBarThickness = 3
+FarmList.ScrollBarImageTransparency = 0.3
+FarmList.ScrollBarImageColor3 = Colors.Accent
+FarmList.CanvasSize = UDim2.new(0, 0, 0, 0)
+FarmList.AutomaticCanvasSize = Enum.AutomaticSize.None
+FarmList.Parent = FarmPage
+
+local FarmListCorner = Instance.new("UICorner")
+FarmListCorner.CornerRadius = UDim.new(0, 10)
+FarmListCorner.Parent = FarmList
+
+local FarmListPadding = Instance.new("UIPadding")
+FarmListPadding.PaddingTop = UDim.new(0, 6)
+FarmListPadding.PaddingBottom = UDim.new(0, 6)
+FarmListPadding.PaddingLeft = UDim.new(0, 6)
+FarmListPadding.PaddingRight = UDim.new(0, 6)
+FarmListPadding.Parent = FarmList
+
+local FarmListLayout = Instance.new("UIListLayout")
+FarmListLayout.Padding = UDim.new(0, 4)
+FarmListLayout.SortOrder = Enum.SortOrder.Name
+FarmListLayout.Parent = FarmList
+
+FarmListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    FarmList.CanvasSize = UDim2.new(0, 0, 0, FarmListLayout.AbsoluteContentSize.Y + 12)
+end)
+
+local FarmStatus = Instance.new("TextLabel")
+FarmStatus.Size = UDim2.new(1, -20, 0, 28)
+FarmStatus.Position = UDim2.new(0, 10, 1, -32)
+FarmStatus.BackgroundColor3 = Colors.Surface
+FarmStatus.Font = Enum.Font.Gotham
+FarmStatus.TextSize = 11
+FarmStatus.TextTruncate = Enum.TextTruncate.AtEnd
+FarmStatus.TextYAlignment = Enum.TextYAlignment.Center
+FarmStatus.TextColor3 = Colors.TextDim
+FarmStatus.TextXAlignment = Enum.TextXAlignment.Left
+FarmStatus.Text = "Farm: Idle"
+FarmStatus.Parent = FarmPage
+
+local FarmStatusCorner = Instance.new("UICorner")
+FarmStatusCorner.CornerRadius = UDim.new(0, 8)
+FarmStatusCorner.Parent = FarmStatus
+
+local FarmStatusPadding = Instance.new("UIPadding")
+FarmStatusPadding.PaddingLeft = UDim.new(0, 10)
+FarmStatusPadding.PaddingRight = UDim.new(0, 10)
+FarmStatusPadding.Parent = FarmStatus
+
+local function setFarmStatus(text)
+    FarmStatusText = text
+    FarmStatus.Text = "Farm: " .. text
+end
+
+
+--==============================================================
+-- TAB SWITCH
+--==============================================================
+
+setTab = function(tab)
+    CurrentTab = tab
+    if tab == "ESP" then
+        ESPPage.Visible = true
+        FarmPage.Visible = false
+        TabESP.BackgroundColor3 = Colors.Accent
+        TabESP.TextColor3 = Color3.new(1, 1, 1)
+        TabFarm.BackgroundColor3 = Colors.SurfaceAlt
+        TabFarm.TextColor3 = Colors.Text
+    else
+        ESPPage.Visible = false
+        FarmPage.Visible = true
+        TabFarm.BackgroundColor3 = Colors.Accent
+        TabFarm.TextColor3 = Color3.new(1, 1, 1)
+        TabESP.BackgroundColor3 = Colors.SurfaceAlt
+        TabESP.TextColor3 = Colors.Text
+        if refreshFarmList then
+            refreshFarmList()
+        end
+    end
+end
+
+TabESP.MouseButton1Click:Connect(function()
+    setTab("ESP")
+end)
+
+TabFarm.MouseButton1Click:Connect(function()
+    setTab("Farm")
+end)
+
+
+--==============================================================
+-- OPEN / CLOSE
 --==============================================================
 
 local function setPanelVisible(visible)
     PanelVisible = visible
     Main.Visible = visible
-
-    if visible then
-        ToggleBtn.Text = "J"
-        ToggleBtn.BackgroundColor3 = Colors.Accent
-    else
-        ToggleBtn.Text = "J"
-        ToggleBtn.BackgroundColor3 = Colors.SurfaceAlt
-    end
+    ToggleBtn.BackgroundColor3 = visible and Colors.Accent or Colors.SurfaceAlt
 end
 
 ToggleBtn.MouseButton1Click:Connect(function()
     setPanelVisible(not PanelVisible)
 end)
 
--- Soft hover effect on toggle
 ToggleBtn.MouseEnter:Connect(function()
     TweenService:Create(ToggleBtn, TweenInfo.new(0.15), {
         BackgroundColor3 = Colors.AccentSoft
@@ -683,7 +884,6 @@ local function createEggGroup(groupName)
 
     TypeESP.MouseButton1Click:Connect(function()
         group.TypeESPEnabled = not group.TypeESPEnabled
-
         if group.TypeESPEnabled then
             TypeESP.Text = "ESP"
             TypeESP.BackgroundColor3 = Colors.Success
@@ -691,7 +891,6 @@ local function createEggGroup(groupName)
             TypeESP.Text = "OFF"
             TypeESP.BackgroundColor3 = Colors.Danger
         end
-
         for model in pairs(group.Eggs) do
             local esp = ESPs[model]
             if esp then
@@ -703,6 +902,10 @@ local function createEggGroup(groupName)
             end
         end
     end)
+
+    if refreshFarmList then
+        refreshFarmList()
+    end
 
     return group
 end
@@ -780,19 +983,16 @@ local function createEggEntry(model)
             showStatus("Egg no longer exists")
             return
         end
-
         getCharacter()
         if not Character or not RootPart then
             showStatus("Character not found")
             return
         end
-
         local target = getEggTopCFrame(model)
         if not target then
             showStatus("Egg is not ready")
             return
         end
-
         local success, reason = safeTeleport(Character, RootPart, target)
         if success then
             showStatus("Teleported to " .. model.Name)
@@ -800,6 +1000,99 @@ local function createEggEntry(model)
             showStatus("Teleport failed: " .. tostring(reason))
         end
     end)
+end
+
+
+--==============================================================
+-- FARM LIST (multi-select)
+--==============================================================
+
+local function updateFarmRowVisual(name)
+    local row = FarmRows[name]
+    if not row then return end
+    local selected = SelectedFarmEggs[name] == true
+    row.Check.Text = selected and "✓" or ""
+    row.Check.BackgroundColor3 = selected and Colors.Success or Colors.SurfaceAlt
+    row.Frame.BackgroundColor3 = selected and Color3.fromRGB(10, 40, 55) or Color3.fromRGB(12, 24, 48)
+end
+
+local function createFarmRow(name)
+    if FarmRows[name] then
+        updateFarmRowVisual(name)
+        return
+    end
+
+    local Row = Instance.new("Frame")
+    Row.Name = name
+    Row.Size = UDim2.new(1, -4, 0, 30)
+    Row.BackgroundColor3 = Color3.fromRGB(12, 24, 48)
+    Row.BorderSizePixel = 0
+    Row.Parent = FarmList
+
+    local RowCorner = Instance.new("UICorner")
+    RowCorner.CornerRadius = UDim.new(0, 6)
+    RowCorner.Parent = Row
+
+    local Check = Instance.new("TextButton")
+    Check.Size = UDim2.new(0, 24, 0, 24)
+    Check.Position = UDim2.new(0, 4, 0.5, -12)
+    Check.BackgroundColor3 = Colors.SurfaceAlt
+    Check.Text = ""
+    Check.TextColor3 = Color3.new(1, 1, 1)
+    Check.Font = Enum.Font.GothamBold
+    Check.TextSize = 14
+    Check.AutoButtonColor = false
+    Check.Parent = Row
+
+    local CheckCorner = Instance.new("UICorner")
+    CheckCorner.CornerRadius = UDim.new(0, 6)
+    CheckCorner.Parent = Check
+
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, -40, 1, 0)
+    Label.Position = UDim2.new(0, 34, 0, 0)
+    Label.BackgroundTransparency = 1
+    Label.Text = name
+    Label.TextColor3 = Colors.Text
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.Font = Enum.Font.Gotham
+    Label.TextSize = 12
+    Label.TextTruncate = Enum.TextTruncate.AtEnd
+    Label.Parent = Row
+
+    local function toggle()
+        if SelectedFarmEggs[name] then
+            SelectedFarmEggs[name] = nil
+        else
+            SelectedFarmEggs[name] = true
+        end
+        updateFarmRowVisual(name)
+    end
+
+    Check.MouseButton1Click:Connect(toggle)
+    Row.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            toggle()
+        end
+    end)
+
+    FarmRows[name] = {
+        Frame = Row,
+        Check = Check,
+        Label = Label
+    }
+    updateFarmRowVisual(name)
+end
+
+refreshFarmList = function()
+    for name in pairs(EggGroups) do
+        createFarmRow(name)
+    end
+    -- also include any selected that might have disappeared (keep them)
+    for name in pairs(SelectedFarmEggs) do
+        createFarmRow(name)
+    end
 end
 
 
@@ -821,6 +1114,9 @@ local function registerModel(model)
     if updateSearch then
         updateSearch()
     end
+    if refreshFarmList then
+        refreshFarmList()
+    end
 end
 
 local function tryRegisterEgg(object)
@@ -832,7 +1128,6 @@ local function tryRegisterEgg(object)
         if not Running or not object.Parent or not object:IsDescendantOf(RenderedEggs) then
             return
         end
-
         local deadline = os.clock() + 2
         repeat
             if not Running or not object.Parent or not object:IsDescendantOf(RenderedEggs) then
@@ -978,6 +1273,207 @@ local function getBaseplateTopCFrame(baseplate)
     return target
 end
 
+local function teleportToMyPlot()
+    getCharacter()
+    if not Character or not RootPart then
+        return false, "Character not found"
+    end
+    local baseplate = getMyPlotBaseplate()
+    if not baseplate then
+        return false, "Plot not found"
+    end
+    local target = getBaseplateTopCFrame(baseplate)
+    if not target then
+        return false, "Invalid baseplate"
+    end
+    return safeTeleport(Character, RootPart, target)
+end
+
+
+--==============================================================
+-- GRAB EGG
+--==============================================================
+
+local function tryFireProximityPrompt(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") then
+        return false
+    end
+    local ok = pcall(function()
+        if fireproximityprompt then
+            fireproximityprompt(prompt)
+        else
+            prompt:InputHoldBegin()
+            task.wait(prompt.HoldDuration > 0 and prompt.HoldDuration or 0.1)
+            prompt:InputHoldEnd()
+        end
+    end)
+    return ok
+end
+
+local function tryFireClickDetector(detector)
+    if not detector or not detector:IsA("ClickDetector") then
+        return false
+    end
+    local ok = pcall(function()
+        if fireclickdetector then
+            fireclickdetector(detector)
+        end
+    end)
+    return ok
+end
+
+local function pressKeyE()
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    end)
+end
+
+local function tryGrabEgg(model)
+    if not model or not model.Parent then
+        return false
+    end
+
+    local grabbed = false
+
+    for _, desc in ipairs(model:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") then
+            if tryFireProximityPrompt(desc) then
+                grabbed = true
+            end
+        elseif desc:IsA("ClickDetector") then
+            if tryFireClickDetector(desc) then
+                grabbed = true
+            end
+        end
+    end
+
+    -- Also check parent / nearby (some games put prompt outside model)
+    local parent = model.Parent
+    if parent then
+        for _, desc in ipairs(parent:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") then
+                local adornee = desc.Parent
+                if adornee and (adornee == model or adornee:IsDescendantOf(model) or model:IsDescendantOf(adornee)) then
+                    if tryFireProximityPrompt(desc) then
+                        grabbed = true
+                    end
+                end
+            end
+        end
+    end
+
+    -- Fallback: press E (common interact key)
+    pressKeyE()
+    task.wait(0.1)
+    pressKeyE()
+
+    return grabbed
+end
+
+
+--==============================================================
+-- FIND FARM TARGET
+--==============================================================
+
+local function findFarmTarget()
+    if not next(SelectedFarmEggs) then
+        return nil
+    end
+
+    getCharacter()
+    local best = nil
+    local bestDist = math.huge
+
+    for model, entry in pairs(EggEntries) do
+        if model and model.Parent and model:IsDescendantOf(RenderedEggs) then
+            if SelectedFarmEggs[model.Name] then
+                local root = getRootPart(model)
+                if root then
+                    local dist = 0
+                    if RootPart then
+                        dist = (RootPart.Position - root.Position).Magnitude
+                    end
+                    if dist < bestDist then
+                        bestDist = dist
+                        best = model
+                    end
+                end
+            end
+        end
+    end
+
+    return best
+end
+
+
+--==============================================================
+-- AUTO FARM LOOP
+--==============================================================
+
+task.spawn(function()
+    while Running do
+        if AutoFarmEnabled and not FarmBusy and next(SelectedFarmEggs) then
+            if os.clock() - LastFarmAt >= FARM_COOLDOWN then
+                local target = findFarmTarget()
+                if target then
+                    FarmBusy = true
+                    setFarmStatus("TP → " .. target.Name)
+
+                    getCharacter()
+                    if Character and RootPart then
+                        local cf = getEggTopCFrame(target)
+                        if cf then
+                            local ok = safeTeleport(Character, RootPart, cf)
+                            if ok then
+                                task.wait(0.25)
+                                setFarmStatus("Grabbing " .. target.Name)
+                                tryGrabEgg(target)
+                                task.wait(GRAB_WAIT)
+
+                                -- Try grab again if egg still there
+                                if target.Parent then
+                                    tryGrabEgg(target)
+                                    task.wait(0.3)
+                                end
+
+                                setFarmStatus("Returning to plot")
+                                local plotOk = teleportToMyPlot()
+                                if not plotOk then
+                                    setFarmStatus("Plot TP failed")
+                                else
+                                    setFarmStatus("Done • waiting")
+                                end
+                                task.wait(PLOT_WAIT)
+                            else
+                                setFarmStatus("TP failed")
+                            end
+                        else
+                            setFarmStatus("Invalid egg pos")
+                        end
+                    else
+                        setFarmStatus("No character")
+                    end
+
+                    LastFarmAt = os.clock()
+                    FarmBusy = false
+                else
+                    setFarmStatus("Waiting for eggs...")
+                end
+            end
+        elseif AutoFarmEnabled and not next(SelectedFarmEggs) then
+            setFarmStatus("Select egg types")
+        elseif not AutoFarmEnabled and not FarmBusy then
+            if FarmStatusText ~= "Idle" and not string.find(FarmStatusText, "OFF") then
+                setFarmStatus("Idle")
+            end
+        end
+
+        task.wait(0.35)
+    end
+end)
+
 
 --==============================================================
 -- BUTTONS
@@ -985,7 +1481,6 @@ end
 
 GlobalToggle.MouseButton1Click:Connect(function()
     GlobalESPEnabled = not GlobalESPEnabled
-
     if GlobalESPEnabled then
         GlobalToggle.Text = "ESP  •  ON"
         GlobalToggle.BackgroundColor3 = Colors.Success
@@ -993,7 +1488,6 @@ GlobalToggle.MouseButton1Click:Connect(function()
         GlobalToggle.Text = "ESP  •  OFF"
         GlobalToggle.BackgroundColor3 = Colors.Danger
     end
-
     for model, esp in pairs(ESPs) do
         if esp then
             local group = EggGroups[model.Name]
@@ -1008,30 +1502,47 @@ end)
 
 PlotTP.MouseButton1Click:Connect(function()
     if not Running then return end
-    getCharacter()
-    if not Character or not RootPart then
-        showStatus("Character not found")
-        return
-    end
-
-    local baseplate = getMyPlotBaseplate()
-    if not baseplate then
-        showStatus("Your Plot was not found")
-        return
-    end
-
-    local target = getBaseplateTopCFrame(baseplate)
-    if not target then
-        showStatus("Invalid Baseplate")
-        return
-    end
-
-    local success, reason = safeTeleport(Character, RootPart, target)
-    if success then
+    local ok, reason = teleportToMyPlot()
+    if ok then
         showStatus("Teleported to My Plot")
     else
         showStatus("Teleport failed: " .. tostring(reason))
     end
+end)
+
+FarmToggle.MouseButton1Click:Connect(function()
+    AutoFarmEnabled = not AutoFarmEnabled
+    if AutoFarmEnabled then
+        FarmToggle.Text = "Farm  •  ON"
+        FarmToggle.BackgroundColor3 = Colors.Success
+        setFarmStatus("Running...")
+        showStatus("Auto Farm enabled")
+    else
+        FarmToggle.Text = "Farm  •  OFF"
+        FarmToggle.BackgroundColor3 = Colors.Danger
+        setFarmStatus("Idle")
+        showStatus("Auto Farm disabled")
+    end
+end)
+
+SelectAllBtn.MouseButton1Click:Connect(function()
+    for name in pairs(EggGroups) do
+        SelectedFarmEggs[name] = true
+        updateFarmRowVisual(name)
+    end
+    for name in pairs(FarmRows) do
+        SelectedFarmEggs[name] = true
+        updateFarmRowVisual(name)
+    end
+    setFarmStatus("All types selected")
+end)
+
+ClearBtn.MouseButton1Click:Connect(function()
+    table.clear(SelectedFarmEggs)
+    for name in pairs(FarmRows) do
+        updateFarmRowVisual(name)
+    end
+    setFarmStatus("Selection cleared")
 end)
 
 
@@ -1070,7 +1581,7 @@ Search:GetPropertyChangedSignal("Text"):Connect(updateSearch)
 
 
 --==============================================================
--- UPDATE LOOP
+-- UPDATE LOOP (ESP)
 --==============================================================
 
 task.spawn(function()
@@ -1153,6 +1664,7 @@ end)
 local function shutdown()
     if not Running then return end
     Running = false
+    AutoFarmEnabled = false
 
     for model in pairs(ESPs) do
         destroyESP(model)
@@ -1177,4 +1689,5 @@ Close.MouseButton1Click:Connect(shutdown)
 --==============================================================
 
 showStatus("Online  •  Watching for new Eggs", 2)
-print("[JHAYDEE] ESP + Teleport loaded")
+setFarmStatus("Idle")
+print("[JHAYDEE] ESP + Teleport + Auto Farm loaded")
