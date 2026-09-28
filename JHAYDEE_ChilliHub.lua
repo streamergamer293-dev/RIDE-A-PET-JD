@@ -40,12 +40,12 @@ local GRAB_WAIT = 0.08
 local PLOT_WAIT = 0.12
 local GRAB_HEIGHT = 2
 local GRAB_SPAM = 12
-local TWIN_SETTLE = 0.30
-local TWIN_RETURN_TIME = 0.50
-local TWIN_INTERACT_TIME = 1.60
-local TWIN_SIDE_OFFSET = 22          -- farther outside the plot so drop is clearly outside
-local TWIN_DROP_WAIT = 0.55         -- wait after script presses DROP
-local TWIN_REGRAB_WAIT = 0.35       -- wait after re-grab before going onto plot
+local TWIN_SETTLE = 0.35
+local TWIN_RETURN_TIME = 0.55
+local TWIN_INTERACT_TIME = 1.80
+local TWIN_SIDE_EXTRA = 28          -- extra studs past the edge of the plot (clearly outside)
+local TWIN_DROP_WAIT = 0.70         -- wait after script presses DROP
+local TWIN_REGRAB_WAIT = 0.40       -- wait after re-grab before going onto plot
 local GRAB_CONFIRM_TIMEOUT = 1.75
 local GRAB_RETRIES = 3
 
@@ -1244,13 +1244,15 @@ local function getBaseplateTopCFrame(baseplate)
     return target
 end
 
--- Side of the plot (left/right of baseplate) so the egg can be dropped before claim
+-- Side of the plot — CLEARLY OUTSIDE the ranch so the egg does not auto-place
 local function getPlotSideCFrame(baseplate)
     if not baseplate or not baseplate:IsA("BasePart") or not baseplate.Parent then return nil end
     local size, cf = baseplate.Size, baseplate.CFrame
     if not isFiniteNumber(size.Y) or size.Y <= 0 or not isValidPosition(cf.Position) then return nil end
-    -- Offset to the side (X axis of the baseplate) + a little up
-    local side = cf * CFrame.new(TWIN_SIDE_OFFSET, (size.Y * 0.5) + 3, 0)
+    -- Use half the longest horizontal side + extra studs so we are past the plot edge
+    local halfEdge = math.max(size.X, size.Z) * 0.5
+    local offset = halfEdge + TWIN_SIDE_EXTRA
+    local side = cf * CFrame.new(offset, (size.Y * 0.5) + 6, 0)
     if not isValidPosition(side.Position) then return nil end
     return side
 end
@@ -1570,30 +1572,83 @@ tryTwinOnEgg = function(eggModel)
     local centerCF = getBaseplateTopCFrame(baseplate)
     if not sideCF or not centerCF then return false, "Invalid plot positions" end
 
-    -- 1) Script moves to SIDE of plot while egg is still in basket
-    setFarmStatus("Script → side of plot (egg in basket)")
-    if not smoothMoveTo(sideCF, "Side of plot...") then
-        return false, "Side move failed"
+    -- ============================================================
+    -- STEP 1: HARD TP to SIDE of plot (OUTSIDE ranch — not on plot)
+    -- Uses PivotTo so we never path through the plot center
+    -- ============================================================
+    setFarmStatus("Twin STEP1 → SIDE of plot (outside)")
+    local okSide = safeTeleport(Character, RootPart, sideCF)
+    if not okSide then
+        -- fallback: force PivotTo
+        pcall(function()
+            if Character.PrimaryPart then
+                Character:PivotTo(sideCF)
+            else
+                RootPart.CFrame = sideCF
+            end
+        end)
     end
-    task.wait(0.20)
+    task.wait(0.35)
 
-    -- 2) SCRIPT presses DROP (egg is placed on the ground outside the plot)
-    setFarmStatus("Script DROPPING egg...")
-    for _ = 1, 10 do
+    -- Stay on the side — do NOT touch plot center yet
+    getCharacter()
+    if RootPart then
+        -- lock position on side briefly so game doesn't pull us in
+        pcall(function()
+            if Character.PrimaryPart then
+                Character:PivotTo(sideCF)
+            else
+                RootPart.CFrame = sideCF
+            end
+        end)
+    end
+    task.wait(0.15)
+
+    -- ============================================================
+    -- STEP 2: SCRIPT presses DROP while standing OUTSIDE the plot
+    -- Egg must land on the ground at the side, not on the plot
+    -- ============================================================
+    setFarmStatus("Twin STEP2 → DROPPING egg on side")
+    for _ = 1, 12 do
         pressDropButton()
-        task.wait(0.08)
+        task.wait(0.07)
     end
     task.wait(TWIN_DROP_WAIT)
 
-    -- 3) SCRIPT re-grabs the egg that is now on the ground
-    setFarmStatus("Script re-grabbing dropped egg...")
+    -- Keep character on the side while egg drops
+    getCharacter()
+    if RootPart then
+        pcall(function()
+            if Character.PrimaryPart then
+                Character:PivotTo(sideCF)
+            else
+                RootPart.CFrame = sideCF
+            end
+        end)
+    end
+
+    -- ============================================================
+    -- STEP 3: SCRIPT re-grabs the egg that is now on the ground
+    -- ============================================================
+    setFarmStatus("Twin STEP3 → Re-grabbing dropped egg")
     reGrabAtSide()
     task.wait(TWIN_REGRAB_WAIT)
 
-    -- 4) SCRIPT moves onto the plot and places/claims the egg (you keep it)
-    setFarmStatus("Script → onto plot (claim for you)")
-    if not smoothMoveTo(centerCF, "Onto plot...") then
-        return false, "Plot move failed"
+    -- ============================================================
+    -- STEP 4: NOW go onto the plot and place/claim (you keep the egg)
+    -- ============================================================
+    setFarmStatus("Twin STEP4 → Onto plot (claim for you)")
+    getCharacter()
+    if not Character or not RootPart then return false, "Character lost" end
+    local okCenter = safeTeleport(Character, RootPart, centerCF)
+    if not okCenter then
+        pcall(function()
+            if Character.PrimaryPart then
+                Character:PivotTo(centerCF)
+            else
+                RootPart.CFrame = centerCF
+            end
+        end)
     end
     task.wait(TWIN_SETTLE)
 
@@ -1615,7 +1670,7 @@ tryTwinOnEgg = function(eggModel)
         end
     end
 
-    setFarmStatus("Script placing / claiming egg for you...")
+    setFarmStatus("Twin STEP5 → Placing / claiming for you")
     local finishAt = os.clock() + TWIN_INTERACT_TIME
     while os.clock() < finishAt do
         for _, prompt in ipairs(prompts) do
@@ -1629,26 +1684,27 @@ tryTwinOnEgg = function(eggModel)
             end
         end
         pressKeyE()
-        -- One more DROP try in case egg was still in basket
         pressDropButton()
         task.wait(0.05)
     end
 
-    return true, "Claimed – egg is yours (side drop → re-grab → plot)"
+    return true, "Claimed – side drop → re-grab → plot"
 end
 
 afterGrabReturn = function(eggModel)
     if ReturnMode == "Twin" then
         local confirmed = waitForEggGrabConfirmed(eggModel, GRAB_CONFIRM_TIMEOUT)
         if not confirmed then
-            setFarmStatus("Waiting for egg confirmation...")
-            return false
+            setFarmStatus("Waiting for egg in basket...")
+            -- still try Twin even if confirmation is slow
         end
+        setFarmStatus("Starting Twin (side → DROP → claim)...")
         local ok, msg = tryTwinOnEgg(eggModel)
-        setFarmStatus(ok and "Twin done" or ("Twin fail: " .. tostring(msg)))
+        setFarmStatus(ok and "Twin done – egg claimed" or ("Twin fail: " .. tostring(msg)))
         return ok
     else
-        setFarmStatus("TP → Plot")
+        -- TP mode = goes straight onto plot (no side drop)
+        setFarmStatus("TP → Plot (no side drop)")
         local ok = teleportToMyPlot()
         setFarmStatus(ok and "Ready" or "Plot TP failed")
         task.wait(PLOT_WAIT)
