@@ -571,7 +571,7 @@ local ModeTP = Instance.new("TextButton")
 ModeTP.Size = UDim2.new(0, 90, 0, 26)
 ModeTP.Position = UDim2.new(0, 80, 0, 36)
 ModeTP.BackgroundColor3 = Colors.Accent
-ModeTP.Text = "TP Plot"
+ModeTP.Text = "TP Home"
 ModeTP.TextColor3 = Color3.new(1, 1, 1)
 ModeTP.Font = Enum.Font.GothamBold
 ModeTP.TextSize = 11
@@ -586,7 +586,7 @@ local ModeTwin = Instance.new("TextButton")
 ModeTwin.Size = UDim2.new(0, 90, 0, 26)
 ModeTwin.Position = UDim2.new(0, 178, 0, 36)
 ModeTwin.BackgroundColor3 = Colors.SurfaceAlt
-ModeTwin.Text = "Twin Plot"
+ModeTwin.Text = "Twin (no TP)"
 ModeTwin.TextColor3 = Colors.Text
 ModeTwin.Font = Enum.Font.GothamBold
 ModeTwin.TextSize = 11
@@ -619,7 +619,7 @@ FarmHint.Font = Enum.Font.Gotham
 FarmHint.TextSize = 10
 FarmHint.TextColor3 = Colors.TextDim
 FarmHint.TextXAlignment = Enum.TextXAlignment.Left
-FarmHint.Text = "TP = go home  |  Twin = claim then Twin x1000 on plot"
+FarmHint.Text = "TP = teleport home  |  Twin = twin on egg (NO tp)"
 FarmHint.Parent = FarmPage
 
 local FarmList = Instance.new("ScrollingFrame")
@@ -1400,102 +1400,9 @@ local function looksLikeTwin(obj)
         or string.find(action, "collect", 1, true)
 end
 
--- Ultra-fast Twin (speed 1000): spam interactions on plot
-local function tryTwinOnPlot()
-    local ok = teleportToMyPlot()
-    if not ok then
-        return false, "Plot TP failed"
-    end
-
-    local plot = getMyPlot()
-    if not plot then
-        return false, "No plot"
-    end
-
-    local prompts, clicks = collectPlotInteracts(plot)
-
-    -- Prefer twin-named interacts, else use all
-    local twinPrompts, twinClicks = {}, {}
-    for _, p in ipairs(prompts) do
-        if looksLikeTwin(p) then
-            table.insert(twinPrompts, p)
-        end
-    end
-    for _, c in ipairs(clicks) do
-        if looksLikeTwin(c) then
-            table.insert(twinClicks, c)
-        end
-    end
-    if #twinPrompts == 0 then twinPrompts = prompts end
-    if #twinClicks == 0 then twinClicks = clicks end
-
-    setFarmStatus("TWIN x" .. TWIN_SPAM)
-
-    -- Speed 1000: fire as hard/fast as possible
-    for i = 1, TWIN_SPAM do
-        for _, prompt in ipairs(twinPrompts) do
-            pcall(function()
-                if fireproximityprompt then
-                    fireproximityprompt(prompt, 0)
-                else
-                    prompt:InputHoldBegin()
-                    prompt:InputHoldEnd()
-                end
-            end)
-        end
-        for _, detector in ipairs(twinClicks) do
-            pcall(function()
-                if fireclickdetector then
-                    fireclickdetector(detector)
-                end
-            end)
-        end
-
-        -- Light key spam every 50 ticks (not every tick — avoid lag)
-        if i % 50 == 0 then
-            pcall(function()
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            end)
-            task.wait() -- 1 frame yield to not freeze client
-        end
-    end
-
-    return true, "Twin x" .. TWIN_SPAM
-end
-
--- After grab: either plain TP home, or settle claim then Twin x1000 on plot
-local function afterGrabReturn(eggModel)
-    if ReturnMode == "Twin" then
-        -- Secure claim on egg first so it does NOT snap back
-        if eggModel and eggModel.Parent then
-            setFarmStatus("Locking claim...")
-            tryGrabEgg(eggModel)
-            task.wait(TWIN_SETTLE)
-            if eggModel.Parent then
-                tryGrabEgg(eggModel)
-            end
-            task.wait(0.05)
-        end
-
-        setFarmStatus("Twin → Plot")
-        local ok, msg = tryTwinOnPlot()
-        if ok then
-            setFarmStatus("Twin done")
-        else
-            setFarmStatus("Twin fail: " .. tostring(msg))
-        end
-    else
-        setFarmStatus("TP → Plot")
-        local ok = teleportToMyPlot()
-        if ok then
-            setFarmStatus("Ready")
-        else
-            setFarmStatus("Plot TP failed")
-        end
-    end
-    task.wait(PLOT_WAIT)
-end
+-- Defined after tryGrabEgg (see below)
+local tryTwinOnEgg
+local afterGrabReturn
 
 
 --==============================================================
@@ -1613,6 +1520,137 @@ local function getEggGrabCFrame(egg)
         return nil
     end
     return CFrame.new(pos)
+end
+
+
+--==============================================================
+-- TWIN (NO TELEPORT) — real twin on the egg
+--==============================================================
+
+local function fireTwinRemotes(eggModel)
+    local fired = 0
+    local containers = {}
+    pcall(function() table.insert(containers, game:GetService("ReplicatedStorage")) end)
+    pcall(function() table.insert(containers, game:GetService("ReplicatedFirst")) end)
+
+    for _, container in ipairs(containers) do
+        if container then
+            for _, desc in ipairs(container:GetDescendants()) do
+                if desc:IsA("RemoteEvent") then
+                    local n = string.lower(desc.Name)
+                    if string.find(n, "twin", 1, true)
+                        or string.find(n, "merge", 1, true)
+                        or string.find(n, "claim", 1, true)
+                        or string.find(n, "collect", 1, true)
+                        or string.find(n, "pickup", 1, true)
+                        or string.find(n, "grab", 1, true) then
+                        pcall(function()
+                            desc:FireServer()
+                            if eggModel then
+                                desc:FireServer(eggModel)
+                                desc:FireServer(eggModel.Name)
+                            end
+                        end)
+                        fired += 1
+                    end
+                end
+            end
+        end
+    end
+    return fired
+end
+
+tryTwinOnEgg = function(eggModel)
+    if not eggModel or not eggModel.Parent then
+        return false, "Egg gone"
+    end
+
+    setFarmStatus("TWIN x" .. TWIN_SPAM .. " (no TP)")
+
+    local prompts, clicks = collectPrompts(eggModel)
+
+    -- Twin-named interacts only on plot (no TP — only if already usable)
+    local plot = getMyPlot()
+    if plot then
+        for _, desc in ipairs(plot:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and looksLikeTwin(desc) then
+                table.insert(prompts, desc)
+            elseif desc:IsA("ClickDetector") and looksLikeTwin(desc) then
+                table.insert(clicks, desc)
+            end
+        end
+    end
+
+    fireTwinRemotes(eggModel)
+
+    for i = 1, TWIN_SPAM do
+        if not eggModel.Parent then
+            break
+        end
+
+        for _, prompt in ipairs(prompts) do
+            pcall(function()
+                if fireproximityprompt then
+                    fireproximityprompt(prompt, 0)
+                else
+                    prompt:InputHoldBegin()
+                    prompt:InputHoldEnd()
+                end
+            end)
+        end
+        for _, detector in ipairs(clicks) do
+            pcall(function()
+                if fireclickdetector then
+                    fireclickdetector(detector)
+                end
+            end)
+        end
+
+        if i % 25 == 0 then
+            tryGrabEgg(eggModel)
+            fireTwinRemotes(eggModel)
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            end)
+            task.wait()
+        end
+    end
+
+    if eggModel.Parent then
+        tryGrabEgg(eggModel)
+    end
+
+    return true, "Twin done (no TP)"
+end
+
+-- TP mode = teleport home | Twin mode = twin only (NO teleport)
+afterGrabReturn = function(eggModel)
+    if ReturnMode == "Twin" then
+        if eggModel and eggModel.Parent then
+            setFarmStatus("Lock + Twin...")
+            tryGrabEgg(eggModel)
+            task.wait(TWIN_SETTLE)
+            tryGrabEgg(eggModel)
+        end
+
+        local ok, msg = tryTwinOnEgg(eggModel)
+        if ok then
+            setFarmStatus("Twin done")
+        else
+            setFarmStatus("Twin fail: " .. tostring(msg))
+        end
+        -- NO teleport in Twin mode
+    else
+        setFarmStatus("TP → Plot")
+        local ok = teleportToMyPlot()
+        if ok then
+            setFarmStatus("Ready")
+        else
+            setFarmStatus("Plot TP failed")
+        end
+    end
+    task.wait(PLOT_WAIT)
 end
 
 
