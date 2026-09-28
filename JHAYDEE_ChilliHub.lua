@@ -40,12 +40,12 @@ local GRAB_WAIT = 0.08
 local PLOT_WAIT = 0.12
 local GRAB_HEIGHT = 2
 local GRAB_SPAM = 12
-local TWIN_SETTLE = 0.28
-local TWIN_RETURN_TIME = 0.48
-local TWIN_INTERACT_TIME = 1.35
-local TWIN_SIDE_OFFSET = 14          -- how far to the side of the plot to drop the egg
-local TWIN_DROP_WAIT = 0.35         -- wait after landing on the side (drop)
-local TWIN_REGRAB_WAIT = 0.25       -- short wait after re-grab before final Twin
+local TWIN_SETTLE = 0.30
+local TWIN_RETURN_TIME = 0.50
+local TWIN_INTERACT_TIME = 1.60
+local TWIN_SIDE_OFFSET = 22          -- farther outside the plot so drop is clearly outside
+local TWIN_DROP_WAIT = 0.55         -- wait after script presses DROP
+local TWIN_REGRAB_WAIT = 0.35       -- wait after re-grab before going onto plot
 local GRAB_CONFIRM_TIMEOUT = 1.75
 local GRAB_RETRIES = 3
 
@@ -1391,72 +1391,113 @@ local function getEggGrabCFrame(egg)
     return CFrame.new(pos)
 end
 
--- Find and click the red DROP button (shown when egg is in basket)
+-- Script presses the red DROP button so the egg is placed on the ground
+-- (not the player – the script does this automatically)
 local function pressDropButton()
     local gui = LocalPlayer:FindFirstChild("PlayerGui")
     if not gui then return false end
     local found = false
 
+    local function tryClick(btn)
+        if not btn then return end
+        pcall(function()
+            if firesignal then
+                pcall(function() firesignal(btn.MouseButton1Click) end)
+                pcall(function() firesignal(btn.Activated) end)
+                pcall(function() firesignal(btn.MouseButton1Down) end)
+                pcall(function() firesignal(btn.MouseButton1Up) end)
+            end
+            pcall(function() btn:Activate() end)
+            local pos = btn.AbsolutePosition
+            local size = btn.AbsoluteSize
+            if size and size.X > 5 and size.Y > 5 then
+                local cx = pos.X + size.X / 2
+                local cy = pos.Y + size.Y / 2
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                task.wait(0.05)
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            end
+        end)
+        found = true
+    end
+
+    -- 1) Find any button/label that says DROP
     for _, desc in ipairs(gui:GetDescendants()) do
-        if desc:IsA("TextButton") or desc:IsA("ImageButton") then
-            local text, name = "", ""
-            pcall(function()
+        local text, name = "", ""
+        pcall(function()
+            if desc:IsA("TextButton") or desc:IsA("TextLabel") then
                 text = string.upper(tostring(desc.Text or ""))
-                name = string.upper(tostring(desc.Name or ""))
-            end)
-            if text == "DROP" or name == "DROP"
-                or string.find(text, "DROP", 1, true)
-                or string.find(name, "DROP", 1, true) then
-                pcall(function()
-                    if firesignal then
-                        pcall(function() firesignal(desc.MouseButton1Click) end)
-                        pcall(function() firesignal(desc.Activated) end)
-                    end
-                    pcall(function() desc:Activate() end)
-                    -- Click the button position with VirtualInput
-                    local pos = desc.AbsolutePosition
-                    local size = desc.AbsoluteSize
-                    if size.X > 0 and size.Y > 0 then
-                        local cx = pos.X + size.X / 2
-                        local cy = pos.Y + size.Y / 2
-                        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
-                        task.wait(0.04)
-                        VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
-                    end
-                end)
-                found = true
+            end
+            name = string.upper(tostring(desc.Name or ""))
+        end)
+        if text == "DROP" or name == "DROP"
+            or string.find(text, "DROP", 1, true)
+            or string.find(name, "DROP", 1, true) then
+            -- Prefer the actual button; if it's a label, click its parent button
+            if desc:IsA("TextButton") or desc:IsA("ImageButton") then
+                tryClick(desc)
+            else
+                local parent = desc.Parent
+                if parent and (parent:IsA("TextButton") or parent:IsA("ImageButton") or parent:IsA("Frame") or parent:IsA("ImageLabel")) then
+                    tryClick(parent)
+                end
+                tryClick(desc)
             end
         end
     end
 
-    -- Also try common drop keys + unequip
+    -- 2) Fallback: click the right side of the screen where the red DROP button sits in the video
+    if not found then
+        pcall(function()
+            local cam = workspace.CurrentCamera
+            if cam then
+                local vp = cam.ViewportSize
+                -- DROP is a tall red button on the right edge, middle-right
+                local cx = vp.X - 40
+                local cy = vp.Y * 0.45
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, true, game, 0)
+                task.wait(0.05)
+                VirtualInputManager:SendMouseButtonEvent(cx, cy, 0, false, game, 0)
+            end
+        end)
+    end
+
+    -- 3) Unequip tools (egg may be a tool in some builds)
+    getCharacter()
+    if Character then
+        local hum = Character:FindFirstChildOfClass("Humanoid")
+        if hum then pcall(function() hum:UnequipTools() end) end
+        for _, tool in ipairs(Character:GetChildren()) do
+            if tool:IsA("Tool") then
+                pcall(function() tool.Parent = LocalPlayer:FindFirstChild("Backpack") end)
+            end
+        end
+    end
+
+    -- 4) Common drop keys
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Backspace, false, game)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Backspace, false, game)
     end)
     pcall(function()
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.X, false, game)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.X, false, game)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Q, false, game)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Q, false, game)
     end)
-    getCharacter()
-    if Character then
-        local hum = Character:FindFirstChildOfClass("Humanoid")
-        if hum then pcall(function() hum:UnequipTools() end) end
-    end
+
     return found
 end
 
--- Re-grab any nearby egg after it was dropped on the ground
+-- After the script drops the egg, re-grab it from the ground near the player
 local function reGrabAtSide()
     getCharacter()
     if not RootPart then return end
-    for _ = 1, 12 do
+    for _ = 1, 15 do
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("ProximityPrompt") and obj.Enabled ~= false then
                 local parent = obj.Parent
                 if parent then
                     local part = parent:IsA("BasePart") and parent or parent:FindFirstChildWhichIsA("BasePart")
-                    if part and (RootPart.Position - part.Position).Magnitude < 25 then
+                    if part and (RootPart.Position - part.Position).Magnitude < 30 then
                         tryFireProximityPrompt(obj)
                     end
                 end
@@ -1464,8 +1505,19 @@ local function reGrabAtSide()
                 local parent = obj.Parent
                 if parent then
                     local part = parent:IsA("BasePart") and parent or parent:FindFirstChildWhichIsA("BasePart")
-                    if part and (RootPart.Position - part.Position).Magnitude < 25 then
+                    if part and (RootPart.Position - part.Position).Magnitude < 30 then
                         tryFireClickDetector(obj)
+                    end
+                end
+            end
+        end
+        -- Also try grabbing any nearby model that looks like an egg
+        if RenderedEggs then
+            for _, model in ipairs(RenderedEggs:GetChildren()) do
+                if model:IsA("Model") then
+                    local root = getRootPart(model)
+                    if root and (RootPart.Position - root.Position).Magnitude < 30 then
+                        tryGrabEgg(model)
                     end
                 end
             end
@@ -1494,15 +1546,15 @@ local function smoothMoveTo(targetCFrame, statusText)
 end
 
 --==============================================================
--- TWIN  (Side of plot → DROP → Re-grab → Claim on plot)
+-- TWIN  (Script drops egg on side → re-grabs → claims on plot)
 --==============================================================
 --[[
-  Exact flow from the video:
-  1. Egg is already in the basket (after map grab)
-  2. Fly / TP to the SIDE of your plot (outside the ranch)
-  3. Press the red DROP button so the egg is placed on the ground
-  4. Re-grab that dropped egg
-  5. Move onto the plot and place / claim it
+  Goal: egg does NOT get auto-returned. Script does everything:
+  1. Egg is in basket (after map grab)
+  2. Script moves to SIDE of plot (outside ranch)
+  3. Script presses DROP → egg is placed on the ground
+  4. Script re-grabs that dropped egg
+  5. Script moves onto the plot and places/claims it (you keep the egg)
 ]]
 
 tryTwinOnEgg = function(eggModel)
@@ -1518,34 +1570,34 @@ tryTwinOnEgg = function(eggModel)
     local centerCF = getBaseplateTopCFrame(baseplate)
     if not sideCF or not centerCF then return false, "Invalid plot positions" end
 
-    -- 1) Go to SIDE of plot while still holding the egg in basket
-    setFarmStatus("Twin → Side of plot (holding egg)")
-    if not smoothMoveTo(sideCF, "Going to side...") then
+    -- 1) Script moves to SIDE of plot while egg is still in basket
+    setFarmStatus("Script → side of plot (egg in basket)")
+    if not smoothMoveTo(sideCF, "Side of plot...") then
         return false, "Side move failed"
     end
-    task.wait(0.15)
+    task.wait(0.20)
 
-    -- 2) PRESS THE RED DROP BUTTON (critical step from the video)
-    setFarmStatus("Pressing DROP...")
-    for _ = 1, 8 do
+    -- 2) SCRIPT presses DROP (egg is placed on the ground outside the plot)
+    setFarmStatus("Script DROPPING egg...")
+    for _ = 1, 10 do
         pressDropButton()
-        task.wait(0.1)
+        task.wait(0.08)
     end
     task.wait(TWIN_DROP_WAIT)
 
-    -- 3) Re-grab the egg that is now on the ground
-    setFarmStatus("Re-grabbing dropped egg...")
+    -- 3) SCRIPT re-grabs the egg that is now on the ground
+    setFarmStatus("Script re-grabbing dropped egg...")
     reGrabAtSide()
     task.wait(TWIN_REGRAB_WAIT)
 
-    -- 4) Move onto the plot so the game places / claims the egg
-    setFarmStatus("Twin → Onto plot (claim)")
+    -- 4) SCRIPT moves onto the plot and places/claims the egg (you keep it)
+    setFarmStatus("Script → onto plot (claim for you)")
     if not smoothMoveTo(centerCF, "Onto plot...") then
-        return false, "Plot center move failed"
+        return false, "Plot move failed"
     end
     task.wait(TWIN_SETTLE)
 
-    -- Fire place / nest / claim prompts
+    -- Place / nest / claim prompts on the plot
     local prompts, clicks = {}, {}
     for _, desc in ipairs(plot:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
@@ -1553,8 +1605,8 @@ tryTwinOnEgg = function(eggModel)
             if string.find(n, "place", 1, true)
                 or string.find(n, "nest", 1, true)
                 or string.find(n, "claim", 1, true)
-                or string.find(n, "twin", 1, true)
-                or string.find(n, "hatch", 1, true)
+                or string.find(n, "egg", 1, true)
+                or string.find(n, "drop", 1, true)
                 or desc.Enabled ~= false then
                 table.insert(prompts, desc)
             end
@@ -1563,7 +1615,7 @@ tryTwinOnEgg = function(eggModel)
         end
     end
 
-    setFarmStatus("Placing / Claiming egg...")
+    setFarmStatus("Script placing / claiming egg for you...")
     local finishAt = os.clock() + TWIN_INTERACT_TIME
     while os.clock() < finishAt do
         for _, prompt in ipairs(prompts) do
@@ -1577,11 +1629,12 @@ tryTwinOnEgg = function(eggModel)
             end
         end
         pressKeyE()
-        pressDropButton() -- in case still holding
-        task.wait(0.06)
+        -- One more DROP try in case egg was still in basket
+        pressDropButton()
+        task.wait(0.05)
     end
 
-    return true, "Twin done (side → DROP → re-grab → claim)"
+    return true, "Claimed – egg is yours (side drop → re-grab → plot)"
 end
 
 afterGrabReturn = function(eggModel)
