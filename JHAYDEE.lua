@@ -43,9 +43,11 @@ local UPDATE_RATE = 0.20
 local HEIGHT_OFFSET = 10
 local SHOW_HIGHLIGHT = true
 
-local FARM_COOLDOWN = 1.8
-local GRAB_WAIT = 0.75
-local PLOT_WAIT = 0.6
+local FARM_COOLDOWN = 0.35
+local GRAB_WAIT = 0.12
+local PLOT_WAIT = 0.2
+local GRAB_HEIGHT = 3
+local GRAB_SPAM = 6
 
 
 --==============================================================
@@ -62,6 +64,7 @@ local SelectedFarmEggs = {} -- [eggName] = true
 local FarmBusy = false
 local LastFarmAt = 0
 local FarmStatusText = "Idle"
+local ReturnMode = "TP" -- "TP" | "Twin"
 
 local ESPs = {}
 local EggEntries = {}
@@ -550,9 +553,65 @@ local ClearCorner = Instance.new("UICorner")
 ClearCorner.CornerRadius = UDim.new(0, 8)
 ClearCorner.Parent = ClearBtn
 
+-- After-grab mode: TP or Twin
+local ModeLabel = Instance.new("TextLabel")
+ModeLabel.Size = UDim2.new(0, 70, 0, 26)
+ModeLabel.Position = UDim2.new(0, 10, 0, 36)
+ModeLabel.BackgroundTransparency = 1
+ModeLabel.Font = Enum.Font.Gotham
+ModeLabel.TextSize = 10
+ModeLabel.TextColor3 = Colors.TextDim
+ModeLabel.TextXAlignment = Enum.TextXAlignment.Left
+ModeLabel.Text = "After grab:"
+ModeLabel.Parent = FarmPage
+
+local ModeTP = Instance.new("TextButton")
+ModeTP.Size = UDim2.new(0, 90, 0, 26)
+ModeTP.Position = UDim2.new(0, 80, 0, 36)
+ModeTP.BackgroundColor3 = Colors.Accent
+ModeTP.Text = "TP Plot"
+ModeTP.TextColor3 = Color3.new(1, 1, 1)
+ModeTP.Font = Enum.Font.GothamBold
+ModeTP.TextSize = 11
+ModeTP.AutoButtonColor = false
+ModeTP.Parent = FarmPage
+
+local ModeTPCorner = Instance.new("UICorner")
+ModeTPCorner.CornerRadius = UDim.new(0, 7)
+ModeTPCorner.Parent = ModeTP
+
+local ModeTwin = Instance.new("TextButton")
+ModeTwin.Size = UDim2.new(0, 90, 0, 26)
+ModeTwin.Position = UDim2.new(0, 178, 0, 36)
+ModeTwin.BackgroundColor3 = Colors.SurfaceAlt
+ModeTwin.Text = "Twin Plot"
+ModeTwin.TextColor3 = Colors.Text
+ModeTwin.Font = Enum.Font.GothamBold
+ModeTwin.TextSize = 11
+ModeTwin.AutoButtonColor = false
+ModeTwin.Parent = FarmPage
+
+local ModeTwinCorner = Instance.new("UICorner")
+ModeTwinCorner.CornerRadius = UDim.new(0, 7)
+ModeTwinCorner.Parent = ModeTwin
+
+local function updateModeButtons()
+    if ReturnMode == "TP" then
+        ModeTP.BackgroundColor3 = Colors.Accent
+        ModeTP.TextColor3 = Color3.new(1, 1, 1)
+        ModeTwin.BackgroundColor3 = Colors.SurfaceAlt
+        ModeTwin.TextColor3 = Colors.Text
+    else
+        ModeTwin.BackgroundColor3 = Colors.Warning
+        ModeTwin.TextColor3 = Color3.fromRGB(20, 20, 30)
+        ModeTP.BackgroundColor3 = Colors.SurfaceAlt
+        ModeTP.TextColor3 = Colors.Text
+    end
+end
+
 local FarmHint = Instance.new("TextLabel")
-FarmHint.Size = UDim2.new(1, -20, 0, 20)
-FarmHint.Position = UDim2.new(0, 10, 0, 36)
+FarmHint.Size = UDim2.new(1, -20, 0, 18)
+FarmHint.Position = UDim2.new(0, 10, 0, 66)
 FarmHint.BackgroundTransparency = 1
 FarmHint.Font = Enum.Font.Gotham
 FarmHint.TextSize = 10
@@ -562,8 +621,8 @@ FarmHint.Text = "Select egg types to auto farm (multi-select)"
 FarmHint.Parent = FarmPage
 
 local FarmList = Instance.new("ScrollingFrame")
-FarmList.Size = UDim2.new(1, -20, 0, 270)
-FarmList.Position = UDim2.new(0, 10, 0, 58)
+FarmList.Size = UDim2.new(1, -20, 0, 240)
+FarmList.Position = UDim2.new(0, 10, 0, 86)
 FarmList.BackgroundColor3 = Colors.Surface
 FarmList.BorderSizePixel = 0
 FarmList.ClipsDescendants = true
@@ -621,6 +680,20 @@ local function setFarmStatus(text)
     FarmStatusText = text
     FarmStatus.Text = "Farm: " .. text
 end
+
+ModeTP.MouseButton1Click:Connect(function()
+    ReturnMode = "TP"
+    updateModeButtons()
+    setFarmStatus("Mode: TP Plot")
+end)
+
+ModeTwin.MouseButton1Click:Connect(function()
+    ReturnMode = "Twin"
+    updateModeButtons()
+    setFarmStatus("Mode: Twin Plot")
+end)
+
+updateModeButtons()
 
 
 --==============================================================
@@ -1289,9 +1362,97 @@ local function teleportToMyPlot()
     return safeTeleport(Character, RootPart, target)
 end
 
+-- Twin on plot: TP home then fire Twin-related prompts / common interact
+local function tryTwinOnPlot()
+    local ok = teleportToMyPlot()
+    if not ok then
+        return false, "Plot TP failed"
+    end
+
+    task.wait(0.08)
+
+    local plot = getMyPlot()
+    if not plot then
+        return false, "No plot"
+    end
+
+    local function looksLikeTwin(obj)
+        local n = string.lower(tostring(obj.Name or ""))
+        local action = ""
+        local objText = ""
+        pcall(function()
+            if obj:IsA("ProximityPrompt") then
+                action = string.lower(tostring(obj.ActionText or ""))
+                objText = string.lower(tostring(obj.ObjectText or ""))
+            end
+        end)
+        return string.find(n, "twin", 1, true)
+            or string.find(action, "twin", 1, true)
+            or string.find(objText, "twin", 1, true)
+            or string.find(n, "merge", 1, true)
+            or string.find(action, "merge", 1, true)
+    end
+
+    local fired = false
+    for _, desc in ipairs(plot:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") and looksLikeTwin(desc) then
+            pcall(function()
+                if fireproximityprompt then
+                    fireproximityprompt(desc, 0)
+                    fireproximityprompt(desc)
+                else
+                    desc:InputHoldBegin()
+                    task.wait(0.02)
+                    desc:InputHoldEnd()
+                end
+            end)
+            fired = true
+        elseif desc:IsA("ClickDetector") and looksLikeTwin(desc) then
+            pcall(function()
+                if fireclickdetector then
+                    fireclickdetector(desc)
+                end
+            end)
+            fired = true
+        end
+    end
+
+    -- Fallback: press E a few times on plot (if Twin uses interact)
+    for _ = 1, 3 do
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end)
+        task.wait(0.03)
+    end
+
+    return true, fired and "Twin fired" or "Plot + interact"
+end
+
+local function afterGrabReturn()
+    if ReturnMode == "Twin" then
+        setFarmStatus("Twin → Plot")
+        local ok, msg = tryTwinOnPlot()
+        if ok then
+            setFarmStatus("Twin done")
+        else
+            setFarmStatus("Twin fail: " .. tostring(msg))
+        end
+    else
+        setFarmStatus("TP → Plot")
+        local ok = teleportToMyPlot()
+        if ok then
+            setFarmStatus("Ready")
+        else
+            setFarmStatus("Plot TP failed")
+        end
+    end
+    task.wait(PLOT_WAIT)
+end
+
 
 --==============================================================
--- GRAB EGG
+-- GRAB EGG (fast / spam)
 --==============================================================
 
 local function tryFireProximityPrompt(prompt)
@@ -1300,10 +1461,12 @@ local function tryFireProximityPrompt(prompt)
     end
     local ok = pcall(function()
         if fireproximityprompt then
+            -- Instant fire (no hold delay) — claim before others
+            fireproximityprompt(prompt, 0)
             fireproximityprompt(prompt)
         else
             prompt:InputHoldBegin()
-            task.wait(prompt.HoldDuration > 0 and prompt.HoldDuration or 0.1)
+            task.wait(0.02)
             prompt:InputHoldEnd()
         end
     end)
@@ -1317,6 +1480,7 @@ local function tryFireClickDetector(detector)
     local ok = pcall(function()
         if fireclickdetector then
             fireclickdetector(detector)
+            fireclickdetector(detector, 1)
         end
     end)
     return ok
@@ -1325,9 +1489,34 @@ end
 local function pressKeyE()
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
     end)
+end
+
+local function collectPrompts(model)
+    local prompts = {}
+    local clicks = {}
+
+    for _, desc in ipairs(model:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") then
+            table.insert(prompts, desc)
+        elseif desc:IsA("ClickDetector") then
+            table.insert(clicks, desc)
+        end
+    end
+
+    local parent = model.Parent
+    if parent then
+        for _, desc in ipairs(parent:GetChildren()) do
+            if desc:IsA("ProximityPrompt") then
+                table.insert(prompts, desc)
+            elseif desc:IsA("ClickDetector") then
+                table.insert(clicks, desc)
+            end
+        end
+    end
+
+    return prompts, clicks
 end
 
 local function tryGrabEgg(model)
@@ -1335,41 +1524,48 @@ local function tryGrabEgg(model)
         return false
     end
 
+    local prompts, clicks = collectPrompts(model)
     local grabbed = false
 
-    for _, desc in ipairs(model:GetDescendants()) do
-        if desc:IsA("ProximityPrompt") then
-            if tryFireProximityPrompt(desc) then
-                grabbed = true
-            end
-        elseif desc:IsA("ClickDetector") then
-            if tryFireClickDetector(desc) then
+    -- Spam interact as fast as possible
+    for _ = 1, GRAB_SPAM do
+        if not model.Parent then
+            return true
+        end
+
+        for _, prompt in ipairs(prompts) do
+            if tryFireProximityPrompt(prompt) then
                 grabbed = true
             end
         end
-    end
 
-    -- Also check parent / nearby (some games put prompt outside model)
-    local parent = model.Parent
-    if parent then
-        for _, desc in ipairs(parent:GetDescendants()) do
-            if desc:IsA("ProximityPrompt") then
-                local adornee = desc.Parent
-                if adornee and (adornee == model or adornee:IsDescendantOf(model) or model:IsDescendantOf(adornee)) then
-                    if tryFireProximityPrompt(desc) then
-                        grabbed = true
-                    end
-                end
+        for _, detector in ipairs(clicks) do
+            if tryFireClickDetector(detector) then
+                grabbed = true
             end
         end
-    end
 
-    -- Fallback: press E (common interact key)
-    pressKeyE()
-    task.wait(0.1)
-    pressKeyE()
+        pressKeyE()
+        task.wait(0.02)
+    end
 
     return grabbed
+end
+
+local function getEggGrabCFrame(egg)
+    if not egg or not egg:IsA("Model") or not egg.Parent then
+        return nil
+    end
+    local cf, size = egg:GetBoundingBox()
+    if not isValidPosition(cf.Position) then
+        return nil
+    end
+    local y = cf.Position.Y + (isFiniteNumber(size.Y) and (size.Y * 0.5) or 0) + GRAB_HEIGHT
+    local pos = Vector3.new(cf.Position.X, y, cf.Position.Z)
+    if not isValidPosition(pos) then
+        return nil
+    end
+    return CFrame.new(pos)
 end
 
 
@@ -1386,15 +1582,12 @@ local function findFarmTarget()
     local best = nil
     local bestDist = math.huge
 
-    for model, entry in pairs(EggEntries) do
+    for model in pairs(EggEntries) do
         if model and model.Parent and model:IsDescendantOf(RenderedEggs) then
             if SelectedFarmEggs[model.Name] then
                 local root = getRootPart(model)
                 if root then
-                    local dist = 0
-                    if RootPart then
-                        dist = (RootPart.Position - root.Position).Magnitude
-                    end
+                    local dist = RootPart and (RootPart.Position - root.Position).Magnitude or 0
                     if dist < bestDist then
                         bestDist = dist
                         best = model
@@ -1409,7 +1602,7 @@ end
 
 
 --==============================================================
--- AUTO FARM LOOP
+-- AUTO FARM LOOP (speed prioritized)
 --==============================================================
 
 task.spawn(function()
@@ -1419,38 +1612,34 @@ task.spawn(function()
                 local target = findFarmTarget()
                 if target then
                     FarmBusy = true
-                    setFarmStatus("TP → " .. target.Name)
+                    local eggName = target.Name
+                    setFarmStatus("SNIPE → " .. eggName)
 
                     getCharacter()
                     if Character and RootPart then
-                        local cf = getEggTopCFrame(target)
+                        local cf = getEggGrabCFrame(target) or getEggTopCFrame(target)
                         if cf then
+                            -- Instant TP onto egg
                             local ok = safeTeleport(Character, RootPart, cf)
                             if ok then
-                                task.wait(0.25)
-                                setFarmStatus("Grabbing " .. target.Name)
+                                -- Grab immediately, no delay
+                                setFarmStatus("GRAB " .. eggName)
                                 tryGrabEgg(target)
+
+                                -- One more micro-burst if still there
+                                if target.Parent then
+                                    task.wait(0.04)
+                                    tryGrabEgg(target)
+                                end
+
                                 task.wait(GRAB_WAIT)
 
-                                -- Try grab again if egg still there
-                                if target.Parent then
-                                    tryGrabEgg(target)
-                                    task.wait(0.3)
-                                end
-
-                                setFarmStatus("Returning to plot")
-                                local plotOk = teleportToMyPlot()
-                                if not plotOk then
-                                    setFarmStatus("Plot TP failed")
-                                else
-                                    setFarmStatus("Done • waiting")
-                                end
-                                task.wait(PLOT_WAIT)
+                                afterGrabReturn()
                             else
                                 setFarmStatus("TP failed")
                             end
                         else
-                            setFarmStatus("Invalid egg pos")
+                            setFarmStatus("Bad egg pos")
                         end
                     else
                         setFarmStatus("No character")
@@ -1459,18 +1648,18 @@ task.spawn(function()
                     LastFarmAt = os.clock()
                     FarmBusy = false
                 else
-                    setFarmStatus("Waiting for eggs...")
+                    setFarmStatus("Scanning...")
                 end
             end
         elseif AutoFarmEnabled and not next(SelectedFarmEggs) then
             setFarmStatus("Select egg types")
         elseif not AutoFarmEnabled and not FarmBusy then
-            if FarmStatusText ~= "Idle" and not string.find(FarmStatusText, "OFF") then
+            if FarmStatusText ~= "Idle" then
                 setFarmStatus("Idle")
             end
         end
 
-        task.wait(0.35)
+        task.wait(0.08)
     end
 end)
 
