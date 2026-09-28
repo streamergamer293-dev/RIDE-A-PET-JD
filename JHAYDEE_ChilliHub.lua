@@ -43,6 +43,9 @@ local GRAB_SPAM = 12
 local TWIN_SETTLE = 0.28
 local TWIN_RETURN_TIME = 0.48
 local TWIN_INTERACT_TIME = 1.35
+local TWIN_SIDE_OFFSET = 14          -- how far to the side of the plot to drop the egg
+local TWIN_DROP_WAIT = 0.35         -- wait after landing on the side (drop)
+local TWIN_REGRAB_WAIT = 0.25       -- short wait after re-grab before final Twin
 local GRAB_CONFIRM_TIMEOUT = 1.75
 local GRAB_RETRIES = 3
 
@@ -1241,6 +1244,17 @@ local function getBaseplateTopCFrame(baseplate)
     return target
 end
 
+-- Side of the plot (left/right of baseplate) so the egg can be dropped before claim
+local function getPlotSideCFrame(baseplate)
+    if not baseplate or not baseplate:IsA("BasePart") or not baseplate.Parent then return nil end
+    local size, cf = baseplate.Size, baseplate.CFrame
+    if not isFiniteNumber(size.Y) or size.Y <= 0 or not isValidPosition(cf.Position) then return nil end
+    -- Offset to the side (X axis of the baseplate) + a little up
+    local side = cf * CFrame.new(TWIN_SIDE_OFFSET, (size.Y * 0.5) + 3, 0)
+    if not isValidPosition(side.Position) then return nil end
+    return side
+end
+
 local function teleportToMyPlot()
     getCharacter()
     if not Character or not RootPart then return false, "Character not found" end
@@ -1377,9 +1391,64 @@ local function getEggGrabCFrame(egg)
     return CFrame.new(pos)
 end
 
+-- Quick local re-grab at current position (used after dropping on the side of the plot)
+local function reGrabAtSide()
+    getCharacter()
+    if not RootPart then return end
+    -- Fire any nearby prompts / press E a few times so the dropped egg is picked up again
+    for _ = 1, 8 do
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("ProximityPrompt") and obj.Enabled ~= false then
+                local parent = obj.Parent
+                if parent and parent:IsA("BasePart") then
+                    local dist = (RootPart.Position - parent.Position).Magnitude
+                    if dist < 20 then
+                        tryFireProximityPrompt(obj)
+                    end
+                end
+            elseif obj:IsA("ClickDetector") then
+                local parent = obj.Parent
+                if parent and parent:IsA("BasePart") then
+                    local dist = (RootPart.Position - parent.Position).Magnitude
+                    if dist < 20 then
+                        tryFireClickDetector(obj)
+                    end
+                end
+            end
+        end
+        pressKeyE()
+        task.wait(0.04)
+    end
+end
+
+-- Smooth move helper
+local function smoothMoveTo(targetCFrame, statusText)
+    getCharacter()
+    if not Character or not RootPart or not targetCFrame then return false end
+    setFarmStatus(statusText or "Moving...")
+    local ok = pcall(function()
+        local distance = (RootPart.Position - targetCFrame.Position).Magnitude
+        local duration = math.clamp(distance / 110, 0.15, TWIN_RETURN_TIME)
+        local tween = TweenService:Create(RootPart, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = targetCFrame})
+        tween:Play()
+        tween.Completed:Wait()
+    end)
+    if not ok or not RootPart.Parent then
+        return safeTeleport(Character, RootPart, targetCFrame)
+    end
+    return true
+end
+
 --==============================================================
--- TWIN (smooth return + real plot interactions)
+-- TWIN  (Drop on side → Re-grab → Twin/Claim on plot)
 --==============================================================
+--[[
+  Flow:
+  1. Player already grabbed the egg from the map
+  2. Go to the SIDE of the plot and "drop" it there
+  3. Re-grab the egg from the side
+  4. Move onto the plot and fire Twin / Claim / Hatch interactions
+]]
 
 tryTwinOnEgg = function(eggModel)
     if not eggModel then return false, "Egg gone" end
@@ -1389,24 +1458,29 @@ tryTwinOnEgg = function(eggModel)
     if not Character or not RootPart then return false, "Character not found" end
 
     local baseplate = getMyPlotBaseplate()
-    local target = baseplate and getBaseplateTopCFrame(baseplate)
-    if not target then return false, "Plot position not found" end
+    if not baseplate then return false, "Plot position not found" end
 
-    setFarmStatus("Smooth Twin → Plot")
+    local sideCF = getPlotSideCFrame(baseplate)
+    local centerCF = getBaseplateTopCFrame(baseplate)
+    if not sideCF or not centerCF then return false, "Invalid plot positions" end
 
-    local ok = pcall(function()
-        local distance = (RootPart.Position - target.Position).Magnitude
-        local duration = math.clamp(distance / 110, 0.18, TWIN_RETURN_TIME)
-        local tween = TweenService:Create(RootPart, TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = target})
-        tween:Play()
-        tween.Completed:Wait()
-    end)
-
-    if not ok or not RootPart.Parent then
-        local tpOK = safeTeleport(Character, RootPart, target)
-        if not tpOK then return false, "Plot return failed" end
+    -- 1) Go to the SIDE of the plot (drop zone)
+    setFarmStatus("Twin → Drop on side of plot")
+    if not smoothMoveTo(sideCF, "Dropping on side...") then
+        return false, "Side drop move failed"
     end
+    task.wait(TWIN_DROP_WAIT)   -- let the egg settle / drop
 
+    -- 2) Re-grab the egg that was just dropped
+    setFarmStatus("Re-grabbing egg from side...")
+    reGrabAtSide()
+    task.wait(TWIN_REGRAB_WAIT)
+
+    -- 3) Move onto the main plot and perform Twin / Claim
+    setFarmStatus("Twin → Claim on plot")
+    if not smoothMoveTo(centerCF, "Moving to plot center...") then
+        return false, "Plot center move failed"
+    end
     task.wait(TWIN_SETTLE)
 
     local prompts, clicks = {}, {}
@@ -1427,10 +1501,16 @@ tryTwinOnEgg = function(eggModel)
     end
 
     if #prompts == 0 and #clicks == 0 then
-        return false, "No Twin interaction found on plot"
+        -- still try E key a few times as last resort
+        setFarmStatus("Twin interactions (E key)...")
+        for _ = 1, 10 do
+            pressKeyE()
+            task.wait(0.06)
+        end
+        return true, "Twin finished (E only)"
     end
 
-    setFarmStatus("Firing Twin interactions...")
+    setFarmStatus("Firing Twin / Claim...")
     local finishAt = os.clock() + TWIN_INTERACT_TIME
     while os.clock() < finishAt do
         for _, prompt in ipairs(prompts) do
@@ -1447,7 +1527,7 @@ tryTwinOnEgg = function(eggModel)
         task.wait(0.05)
     end
 
-    return true, "Twin Plot complete"
+    return true, "Twin complete (side drop → re-grab → claim)"
 end
 
 afterGrabReturn = function(eggModel)
