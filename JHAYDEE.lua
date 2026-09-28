@@ -49,7 +49,10 @@ local PLOT_WAIT = 0.12
 local GRAB_HEIGHT = 2
 local GRAB_SPAM = 12
 local TWIN_SPAM = 60
-local TWIN_SETTLE = 0.15 -- stay on egg a bit so server accepts claim before leaving
+local TWIN_SETTLE = 0.25 -- settle before leaving the egg
+local TWIN_RETURN_TIME = 0.45 -- smooth return-to-plot duration
+local GRAB_CONFIRM_TIMEOUT = 1.75
+local GRAB_RETRIES = 3
 
 
 --==============================================================
@@ -1578,29 +1581,80 @@ local function tryGrabEgg(model)
     local prompts, clicks = collectPrompts(model)
     local grabbed = false
 
-    -- Spam interact as fast as possible
+    -- Controlled grab burst. Do not start another egg until this one is confirmed.
     for _ = 1, GRAB_SPAM do
         if not model.Parent then
             return true
         end
 
         for _, prompt in ipairs(prompts) do
-            if tryFireProximityPrompt(prompt) then
-                grabbed = true
+            if prompt and prompt.Parent then
+                if tryFireProximityPrompt(prompt) then
+                    grabbed = true
+                end
             end
         end
 
         for _, detector in ipairs(clicks) do
-            if tryFireClickDetector(detector) then
-                grabbed = true
+            if detector and detector.Parent then
+                if tryFireClickDetector(detector) then
+                    grabbed = true
+                end
             end
         end
 
-        pressKeyE()
-        task.wait(0.02)
+        if #prompts == 0 and #clicks == 0 then
+            pressKeyE()
+        end
+        task.wait(0.025)
     end
 
     return grabbed
+end
+
+-- The important part: don't farm another egg until the current egg has
+-- actually left the rendered egg container. This prevents overlapping grabs.
+local function waitForEggGrabConfirmed(egg, timeout)
+    local deadline = os.clock() + (timeout or GRAB_CONFIRM_TIMEOUT)
+
+    while os.clock() < deadline do
+        if not egg or not egg.Parent then
+            return true
+        end
+
+        if not RenderedEggs or not egg:IsDescendantOf(RenderedEggs) then
+            return true
+        end
+
+        task.wait(0.05)
+    end
+
+    return false
+end
+
+local function grabEggUntilConfirmed(egg)
+    if not egg or not egg.Parent then
+        return true
+    end
+
+    for attempt = 1, GRAB_RETRIES do
+        if not egg.Parent or not egg:IsDescendantOf(RenderedEggs) then
+            return true
+        end
+
+        setFarmStatus("GRAB " .. tostring(egg.Name) .. " (" .. attempt .. "/" .. GRAB_RETRIES .. ")")
+        tryGrabEgg(egg)
+
+        if waitForEggGrabConfirmed(egg, GRAB_CONFIRM_TIMEOUT) then
+            return true
+        end
+
+        if attempt < GRAB_RETRIES then
+            task.wait(0.12)
+        end
+    end
+
+    return false
 end
 
 local function getEggGrabCFrame(egg)
@@ -1658,95 +1712,99 @@ local function fireTwinRemotes(eggModel)
 end
 
 tryTwinOnEgg = function(eggModel)
-    if not eggModel or not eggModel.Parent then
+    if not eggModel then
         return false, "Egg gone"
     end
 
-    -- Smooth Twin: controlled frame-rate interaction instead of 1000 instant calls.
-    local TWIN_DURATION = 2.5
-    local TWIN_RATE = 60
-    local TWIN_INTERVAL = 1 / TWIN_RATE
-
-    setFarmStatus("SMOOTH TWIN 60 FPS (no TP)")
-
-    local prompts, clicks = collectPrompts(eggModel)
-
-    -- Only collect Twin/merge/claim/collect prompts from the player's plot.
+    -- Twin Plot is a smooth, controlled return to the player's plot followed
+    -- by the real plot-side Twin/merge/claim interactions that are available.
     local plot = getMyPlot()
-    if plot then
-        for _, desc in ipairs(plot:GetDescendants()) do
-            if desc:IsA("ProximityPrompt") and looksLikeTwin(desc) then
-                table.insert(prompts, desc)
-            elseif desc:IsA("ClickDetector") and looksLikeTwin(desc) then
-                table.insert(clicks, desc)
-            end
+    if not plot then
+        return false, "Plot not found"
+    end
+
+    getCharacter()
+    if not Character or not RootPart then
+        return false, "Character not found"
+    end
+
+    local baseplate = getMyPlotBaseplate()
+    local target = baseplate and getBaseplateTopCFrame(baseplate)
+    if not target then
+        return false, "Plot position not found"
+    end
+
+    setFarmStatus("Smooth Twin → Plot")
+
+    -- Smooth movement instead of a hard snap.
+    local ok = pcall(function()
+        local distance = (RootPart.Position - target.Position).Magnitude
+        local duration = math.clamp(distance / 120, 0.18, TWIN_RETURN_TIME)
+        local tween = TweenService:Create(
+            RootPart,
+            TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+            {CFrame = target}
+        )
+        tween:Play()
+        tween.Completed:Wait()
+    end)
+
+    if not ok or not RootPart.Parent then
+        -- Fallback only if the smooth movement failed.
+        local tpOK = safeTeleport(Character, RootPart, target)
+        if not tpOK then
+            return false, "Plot return failed"
         end
     end
 
-    local startTime = os.clock()
-    local nextTick = startTime
-    local ticks = 0
+    task.wait(TWIN_SETTLE)
 
-    while eggModel.Parent and (os.clock() - startTime) < TWIN_DURATION do
-        local now = os.clock()
+    local prompts, clicks = {}, {}
+    for _, desc in ipairs(plot:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") and looksLikeTwin(desc) then
+            table.insert(prompts, desc)
+        elseif desc:IsA("ClickDetector") and looksLikeTwin(desc) then
+            table.insert(clicks, desc)
+        end
+    end
 
-        if now >= nextTick then
-            -- Keep the loop synchronized to a steady 60 Hz instead of a huge burst.
-            nextTick = now + TWIN_INTERVAL
-            ticks += 1
+    if #prompts == 0 and #clicks == 0 then
+        return false, "No Twin interaction found on plot"
+    end
 
-            for _, prompt in ipairs(prompts) do
-                if prompt and prompt.Parent and prompt.Enabled ~= false then
-                    pcall(function()
-                        if fireproximityprompt then
-                            fireproximityprompt(prompt, 0)
-                        else
-                            prompt:InputHoldBegin()
-                            prompt:InputHoldEnd()
-                        end
-                    end)
-                end
-            end
+    -- Real interaction pass: use the actual Twin/merge/claim/collect
+    -- interaction objects found on the player's plot, without remote-name guessing.
+    local cycles = 0
+    local finishAt = os.clock() + 1.25
+    while os.clock() < finishAt do
+        cycles += 1
 
-            for _, detector in ipairs(clicks) do
-                if detector and detector.Parent then
-                    pcall(function()
-                        if fireclickdetector then
-                            fireclickdetector(detector)
-                        end
-                    end)
-                end
-            end
-
-            -- Periodic grab keeps the interaction alive without burst-spamming.
-            if ticks % 10 == 0 then
-                pcall(function()
-                    tryGrabEgg(eggModel)
-                end)
+        for _, prompt in ipairs(prompts) do
+            if prompt and prompt.Parent and prompt.Enabled ~= false then
+                tryFireProximityPrompt(prompt)
             end
         end
 
-        task.wait()
+        for _, detector in ipairs(clicks) do
+            if detector and detector.Parent then
+                tryFireClickDetector(detector)
+            end
+        end
+
+        task.wait(0.05)
     end
 
-    -- One final interaction pass when the smooth cycle finishes.
-    if eggModel.Parent then
-        pcall(function()
-            tryGrabEgg(eggModel)
-        end)
-    end
-
-    return true, "Smooth Twin done"
+    return true, "Twin Plot complete"
 end
 
 -- TP mode = teleport home | Twin mode = twin only (NO teleport)
 afterGrabReturn = function(eggModel)
     if ReturnMode == "Twin" then
-        if eggModel and eggModel.Parent then
-            setFarmStatus("Lock + Twin...")
-            tryGrabEgg(eggModel)
-            task.wait(TWIN_SETTLE)
-            tryGrabEgg(eggModel)
+        -- Do not start Twin until the first egg is actually confirmed grabbed.
+        local confirmed = waitForEggGrabConfirmed(eggModel, GRAB_CONFIRM_TIMEOUT)
+        if not confirmed then
+            setFarmStatus("Waiting for egg confirmation...")
+            return false
         end
 
         local ok, msg = tryTwinOnEgg(eggModel)
@@ -1755,7 +1813,7 @@ afterGrabReturn = function(eggModel)
         else
             setFarmStatus("Twin fail: " .. tostring(msg))
         end
-        -- NO teleport in Twin mode
+        return ok
     else
         setFarmStatus("TP → Plot")
         local ok = teleportToMyPlot()
@@ -1764,8 +1822,9 @@ afterGrabReturn = function(eggModel)
         else
             setFarmStatus("Plot TP failed")
         end
+        task.wait(PLOT_WAIT)
+        return ok
     end
-    task.wait(PLOT_WAIT)
 end
 
 
@@ -1824,19 +1883,17 @@ task.spawn(function()
                             -- Instant TP onto egg
                             local ok = safeTeleport(Character, RootPart, cf)
                             if ok then
-                                -- Grab immediately, no delay
+                                -- Finish this egg completely before another egg can be selected.
                                 setFarmStatus("GRAB " .. eggName)
-                                tryGrabEgg(target)
+                                local confirmed = grabEggUntilConfirmed(target)
 
-                                -- One more micro-burst if still there
-                                if target.Parent then
-                                    task.wait(0.04)
-                                    tryGrabEgg(target)
+                                if confirmed then
+                                    task.wait(GRAB_WAIT)
+                                    afterGrabReturn(target)
+                                else
+                                    setFarmStatus("Grab not confirmed: " .. eggName)
+                                    task.wait(0.20)
                                 end
-
-                                task.wait(GRAB_WAIT)
-
-                                afterGrabReturn(target)
                             else
                                 setFarmStatus("TP failed")
                             end
