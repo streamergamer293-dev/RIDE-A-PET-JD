@@ -43,11 +43,13 @@ local UPDATE_RATE = 0.20
 local HEIGHT_OFFSET = 10
 local SHOW_HIGHLIGHT = true
 
-local FARM_COOLDOWN = 0.35
-local GRAB_WAIT = 0.12
-local PLOT_WAIT = 0.2
-local GRAB_HEIGHT = 3
-local GRAB_SPAM = 6
+local FARM_COOLDOWN = 0.25
+local GRAB_WAIT = 0.08
+local PLOT_WAIT = 0.12
+local GRAB_HEIGHT = 2
+local GRAB_SPAM = 12
+local TWIN_SPAM = 1000
+local TWIN_SETTLE = 0.15 -- stay on egg a bit so server accepts claim before leaving
 
 
 --==============================================================
@@ -617,7 +619,7 @@ FarmHint.Font = Enum.Font.Gotham
 FarmHint.TextSize = 10
 FarmHint.TextColor3 = Colors.TextDim
 FarmHint.TextXAlignment = Enum.TextXAlignment.Left
-FarmHint.Text = "Select egg types to auto farm (multi-select)"
+FarmHint.Text = "TP = go home  |  Twin = claim then Twin x1000 on plot"
 FarmHint.Parent = FarmPage
 
 local FarmList = Instance.new("ScrollingFrame")
@@ -1362,75 +1364,120 @@ local function teleportToMyPlot()
     return safeTeleport(Character, RootPart, target)
 end
 
--- Twin on plot: TP home then fire Twin-related prompts / common interact
+-- Collect prompts/detectors on plot for twin
+local function collectPlotInteracts(plot)
+    local prompts = {}
+    local clicks = {}
+    if not plot then return prompts, clicks end
+
+    for _, desc in ipairs(plot:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") then
+            table.insert(prompts, desc)
+        elseif desc:IsA("ClickDetector") then
+            table.insert(clicks, desc)
+        end
+    end
+    return prompts, clicks
+end
+
+local function looksLikeTwin(obj)
+    local n = string.lower(tostring(obj.Name or ""))
+    local action, objText = "", ""
+    pcall(function()
+        if obj:IsA("ProximityPrompt") then
+            action = string.lower(tostring(obj.ActionText or ""))
+            objText = string.lower(tostring(obj.ObjectText or ""))
+        end
+    end)
+    return string.find(n, "twin", 1, true)
+        or string.find(action, "twin", 1, true)
+        or string.find(objText, "twin", 1, true)
+        or string.find(n, "merge", 1, true)
+        or string.find(action, "merge", 1, true)
+        or string.find(n, "claim", 1, true)
+        or string.find(action, "claim", 1, true)
+        or string.find(n, "collect", 1, true)
+        or string.find(action, "collect", 1, true)
+end
+
+-- Ultra-fast Twin (speed 1000): spam interactions on plot
 local function tryTwinOnPlot()
     local ok = teleportToMyPlot()
     if not ok then
         return false, "Plot TP failed"
     end
 
-    task.wait(0.08)
-
     local plot = getMyPlot()
     if not plot then
         return false, "No plot"
     end
 
-    local function looksLikeTwin(obj)
-        local n = string.lower(tostring(obj.Name or ""))
-        local action = ""
-        local objText = ""
-        pcall(function()
-            if obj:IsA("ProximityPrompt") then
-                action = string.lower(tostring(obj.ActionText or ""))
-                objText = string.lower(tostring(obj.ObjectText or ""))
-            end
-        end)
-        return string.find(n, "twin", 1, true)
-            or string.find(action, "twin", 1, true)
-            or string.find(objText, "twin", 1, true)
-            or string.find(n, "merge", 1, true)
-            or string.find(action, "merge", 1, true)
-    end
+    local prompts, clicks = collectPlotInteracts(plot)
 
-    local fired = false
-    for _, desc in ipairs(plot:GetDescendants()) do
-        if desc:IsA("ProximityPrompt") and looksLikeTwin(desc) then
+    -- Prefer twin-named interacts, else use all
+    local twinPrompts, twinClicks = {}, {}
+    for _, p in ipairs(prompts) do
+        if looksLikeTwin(p) then
+            table.insert(twinPrompts, p)
+        end
+    end
+    for _, c in ipairs(clicks) do
+        if looksLikeTwin(c) then
+            table.insert(twinClicks, c)
+        end
+    end
+    if #twinPrompts == 0 then twinPrompts = prompts end
+    if #twinClicks == 0 then twinClicks = clicks end
+
+    setFarmStatus("TWIN x" .. TWIN_SPAM)
+
+    -- Speed 1000: fire as hard/fast as possible
+    for i = 1, TWIN_SPAM do
+        for _, prompt in ipairs(twinPrompts) do
             pcall(function()
                 if fireproximityprompt then
-                    fireproximityprompt(desc, 0)
-                    fireproximityprompt(desc)
+                    fireproximityprompt(prompt, 0)
                 else
-                    desc:InputHoldBegin()
-                    task.wait(0.02)
-                    desc:InputHoldEnd()
+                    prompt:InputHoldBegin()
+                    prompt:InputHoldEnd()
                 end
             end)
-            fired = true
-        elseif desc:IsA("ClickDetector") and looksLikeTwin(desc) then
+        end
+        for _, detector in ipairs(twinClicks) do
             pcall(function()
                 if fireclickdetector then
-                    fireclickdetector(desc)
+                    fireclickdetector(detector)
                 end
             end)
-            fired = true
+        end
+
+        -- Light key spam every 50 ticks (not every tick — avoid lag)
+        if i % 50 == 0 then
+            pcall(function()
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            end)
+            task.wait() -- 1 frame yield to not freeze client
         end
     end
 
-    -- Fallback: press E a few times on plot (if Twin uses interact)
-    for _ = 1, 3 do
-        pcall(function()
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        end)
-        task.wait(0.03)
-    end
-
-    return true, fired and "Twin fired" or "Plot + interact"
+    return true, "Twin x" .. TWIN_SPAM
 end
 
-local function afterGrabReturn()
+-- After grab: either plain TP home, or settle claim then Twin x1000 on plot
+local function afterGrabReturn(eggModel)
     if ReturnMode == "Twin" then
+        -- Secure claim on egg first so it does NOT snap back
+        if eggModel and eggModel.Parent then
+            setFarmStatus("Locking claim...")
+            tryGrabEgg(eggModel)
+            task.wait(TWIN_SETTLE)
+            if eggModel.Parent then
+                tryGrabEgg(eggModel)
+            end
+            task.wait(0.05)
+        end
+
         setFarmStatus("Twin → Plot")
         local ok, msg = tryTwinOnPlot()
         if ok then
@@ -1634,7 +1681,7 @@ task.spawn(function()
 
                                 task.wait(GRAB_WAIT)
 
-                                afterGrabReturn()
+                                afterGrabReturn(target)
                             else
                                 setFarmStatus("TP failed")
                             end
