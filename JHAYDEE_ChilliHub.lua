@@ -1,11 +1,11 @@
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                         JHAYDEE                                  ║
+║                       JHAYDEE HUB                                ║
 ║         Rendered Eggs ESP + Teleport + Auto Farm                 ║
 ║                                                                  ║
 ║  Compact Chilli Hub style panel (~400x340)                       ║
-║  All main buttons functional                                     ║
-║  Improved Twin (smooth plot return + real interactions)          ║
+║  Twin steps 1-4 only (side → DROP → re-grab → claim)             ║
+║  Map tab: live eggs on map + distance + TP                       ║
 ╚══════════════════════════════════════════════════════════════════╝
 ]]
 
@@ -181,7 +181,7 @@ local Colors = {
 --==============================================================
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "JHAYDEE"
+ScreenGui.Name = "JHAYDEE_HUB"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -246,7 +246,7 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 14
 Title.TextColor3 = Color3.new(1, 1, 1)
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "Chilli Hub"
+Title.Text = "JHAYDEE HUB"
 Title.Parent = TopBar
 
 local Close = Instance.new("TextButton")
@@ -288,6 +288,7 @@ local TabFarm = createSidebarBtn("Farm", 1)
 local TabESP = createSidebarBtn("ESP", 2)
 local TabPlayer = createSidebarBtn("Player", 3)
 local TabServer = createSidebarBtn("Server", 4)
+local TabMap = createSidebarBtn("Map", 5)
 
 -- Content
 local Content = Instance.new("Frame")
@@ -674,11 +675,167 @@ CopyJobBtn.Parent = ServerSection
 Instance.new("UICorner", CopyJobBtn).CornerRadius = UDim.new(0, 5)
 
 --==============================================================
+-- MAP PAGE (live eggs on map + distance + TP — Chilli style)
+--==============================================================
+
+local MapPage = Instance.new("ScrollingFrame")
+MapPage.Name = "MapPage"
+MapPage.Size = UDim2.new(1, 0, 1, 0)
+MapPage.BackgroundTransparency = 1
+MapPage.BorderSizePixel = 0
+MapPage.ScrollBarThickness = 3
+MapPage.ScrollBarImageColor3 = Colors.Accent
+MapPage.CanvasSize = UDim2.new(0, 0, 0, 400)
+MapPage.Visible = false
+MapPage.Parent = Content
+
+local MapHeaderSection = createSection(MapPage, "Map Eggs", 6, 52)
+local MapInfoLabel = Instance.new("TextLabel")
+MapInfoLabel.Size = UDim2.new(1, -14, 0, 22)
+MapInfoLabel.Position = UDim2.new(0, 7, 0, 26)
+MapInfoLabel.BackgroundTransparency = 1
+MapInfoLabel.Font = Enum.Font.Gotham
+MapInfoLabel.TextSize = 11
+MapInfoLabel.TextColor3 = Colors.TextDim
+MapInfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+MapInfoLabel.Text = "Eggs currently on the map"
+MapInfoLabel.Parent = MapHeaderSection
+
+local MapRefreshBtn = Instance.new("TextButton")
+MapRefreshBtn.Size = UDim2.new(0, 70, 0, 20)
+MapRefreshBtn.Position = UDim2.new(1, -78, 0, 4)
+MapRefreshBtn.BackgroundColor3 = Colors.Accent
+MapRefreshBtn.Text = "Refresh"
+MapRefreshBtn.TextColor3 = Color3.new(1, 1, 1)
+MapRefreshBtn.Font = Enum.Font.GothamBold
+MapRefreshBtn.TextSize = 10
+MapRefreshBtn.AutoButtonColor = false
+MapRefreshBtn.Parent = MapHeaderSection
+Instance.new("UICorner", MapRefreshBtn).CornerRadius = UDim.new(0, 4)
+
+local MapListSection = createSection(MapPage, "Nearby / All Eggs", 64, 240)
+local MapListFrame = Instance.new("ScrollingFrame")
+MapListFrame.Size = UDim2.new(1, -12, 1, -28)
+MapListFrame.Position = UDim2.new(0, 6, 0, 24)
+MapListFrame.BackgroundTransparency = 1
+MapListFrame.BorderSizePixel = 0
+MapListFrame.ScrollBarThickness = 3
+MapListFrame.ScrollBarImageColor3 = Colors.Accent
+MapListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+MapListFrame.Parent = MapListSection
+
+local MapListLayout = Instance.new("UIListLayout")
+MapListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+MapListLayout.Padding = UDim.new(0, 3)
+MapListLayout.Parent = MapListFrame
+
+local refreshMapList
+refreshMapList = function()
+    for _, child in ipairs(MapListFrame:GetChildren()) do
+        if child:IsA("TextButton") or child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+    getCharacter()
+    local eggs = {}
+    if RenderedEggs then
+        for _, model in ipairs(RenderedEggs:GetChildren()) do
+            if model:IsA("Model") then
+                local root = getRootPart(model)
+                if root then
+                    local dist = RootPart and (RootPart.Position - root.Position).Magnitude or 0
+                    table.insert(eggs, { model = model, name = model.Name, dist = dist, root = root })
+                end
+            end
+        end
+    end
+    table.sort(eggs, function(a, b) return a.dist < b.dist end)
+
+    MapInfoLabel.Text = (#eggs > 0) and (tostring(#eggs) .. " eggs on map") or "No eggs on map"
+    local order = 0
+    for _, info in ipairs(eggs) do
+        order = order + 1
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, -4, 0, 26)
+        row.BackgroundColor3 = Colors.SurfaceAlt
+        row.Text = ""
+        row.AutoButtonColor = false
+        row.LayoutOrder = order
+        row.Parent = MapListFrame
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+
+        local nameLbl = Instance.new("TextLabel")
+        nameLbl.Size = UDim2.new(0.55, 0, 1, 0)
+        nameLbl.Position = UDim2.new(0, 8, 0, 0)
+        nameLbl.BackgroundTransparency = 1
+        nameLbl.Font = Enum.Font.GothamBold
+        nameLbl.TextSize = 11
+        nameLbl.TextColor3 = Colors.Text
+        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+        nameLbl.Text = info.name
+        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+        nameLbl.Parent = row
+
+        local distLbl = Instance.new("TextLabel")
+        distLbl.Size = UDim2.new(0.25, 0, 1, 0)
+        distLbl.Position = UDim2.new(0.55, 0, 0, 0)
+        distLbl.BackgroundTransparency = 1
+        distLbl.Font = Enum.Font.Gotham
+        distLbl.TextSize = 10
+        distLbl.TextColor3 = Colors.TextDim
+        distLbl.TextXAlignment = Enum.TextXAlignment.Right
+        distLbl.Text = string.format("%.0fm", info.dist)
+        distLbl.Parent = row
+
+        local tpLbl = Instance.new("TextLabel")
+        tpLbl.Size = UDim2.new(0.18, -4, 0, 18)
+        tpLbl.Position = UDim2.new(0.82, 0, 0.5, -9)
+        tpLbl.BackgroundColor3 = Colors.Accent
+        tpLbl.Font = Enum.Font.GothamBold
+        tpLbl.TextSize = 9
+        tpLbl.TextColor3 = Color3.new(1, 1, 1)
+        tpLbl.Text = "TP"
+        tpLbl.Parent = row
+        Instance.new("UICorner", tpLbl).CornerRadius = UDim.new(0, 3)
+
+        local modelRef = info.model
+        row.MouseButton1Click:Connect(function()
+            getCharacter()
+            if not Character or not RootPart then return end
+            if not modelRef or not modelRef.Parent then
+                refreshMapList()
+                return
+            end
+            local cf = getEggGrabCFrame(modelRef) or getEggTopCFrame(modelRef)
+            if cf then
+                safeTeleport(Character, RootPart, cf)
+                setFarmStatus("Map TP → " .. modelRef.Name)
+            end
+        end)
+    end
+    MapListFrame.CanvasSize = UDim2.new(0, 0, 0, order * 29 + 4)
+end
+
+MapRefreshBtn.MouseButton1Click:Connect(function()
+    refreshMapList()
+end)
+
+-- Auto-refresh map list while Map tab is open
+task.spawn(function()
+    while Running do
+        if CurrentTab == "Map" and PanelVisible then
+            pcall(refreshMapList)
+        end
+        task.wait(1.5)
+    end
+end)
+
+--==============================================================
 -- TAB SWITCH
 --==============================================================
 
-local allPages = { Farm = FarmPage, ESP = ESPPage, Player = PlayerPage, Server = ServerPage }
-local allTabs = { Farm = TabFarm, ESP = TabESP, Player = TabPlayer, Server = TabServer }
+local allPages = { Farm = FarmPage, ESP = ESPPage, Player = PlayerPage, Server = ServerPage, Map = MapPage }
+local allTabs = { Farm = TabFarm, ESP = TabESP, Player = TabPlayer, Server = TabServer, Map = TabMap }
 
 setTab = function(tab)
     CurrentTab = tab
@@ -695,12 +852,14 @@ setTab = function(tab)
         end
     end
     if tab == "Farm" and refreshFarmList then refreshFarmList() end
+    if tab == "Map" and refreshMapList then refreshMapList() end
 end
 
 TabFarm.MouseButton1Click:Connect(function() setTab("Farm") end)
 TabESP.MouseButton1Click:Connect(function() setTab("ESP") end)
 TabPlayer.MouseButton1Click:Connect(function() setTab("Player") end)
 TabServer.MouseButton1Click:Connect(function() setTab("Server") end)
+TabMap.MouseButton1Click:Connect(function() setTab("Map") end)
 setTab("Farm")
 
 --==============================================================
@@ -1553,10 +1712,9 @@ end
 --[[
   Goal: egg does NOT get auto-returned. Script does everything:
   1. Egg is in basket (after map grab)
-  2. Script moves to SIDE of plot (outside ranch)
-  3. Script presses DROP → egg is placed on the ground
-  4. Script re-grabs that dropped egg
-  5. Script moves onto the plot and places/claims it (you keep the egg)
+  2. Script moves to SIDE of plot (outside ranch) + DROPS egg
+  3. Script re-grabs that dropped egg
+  4. Script moves onto the plot and places/claims it (you keep the egg)
 ]]
 
 tryTwinOnEgg = function(eggModel)
@@ -1573,13 +1731,11 @@ tryTwinOnEgg = function(eggModel)
     if not sideCF or not centerCF then return false, "Invalid plot positions" end
 
     -- ============================================================
-    -- STEP 1: HARD TP to SIDE of plot (OUTSIDE ranch — not on plot)
-    -- Uses PivotTo so we never path through the plot center
+    -- STEP 1: HARD TP to SIDE of plot (OUTSIDE ranch)
     -- ============================================================
-    setFarmStatus("Twin STEP1 → SIDE of plot (outside)")
+    setFarmStatus("Twin STEP1 → SIDE of plot")
     local okSide = safeTeleport(Character, RootPart, sideCF)
     if not okSide then
-        -- fallback: force PivotTo
         pcall(function()
             if Character.PrimaryPart then
                 Character:PivotTo(sideCF)
@@ -1589,11 +1745,8 @@ tryTwinOnEgg = function(eggModel)
         end)
     end
     task.wait(0.35)
-
-    -- Stay on the side — do NOT touch plot center yet
     getCharacter()
     if RootPart then
-        -- lock position on side briefly so game doesn't pull us in
         pcall(function()
             if Character.PrimaryPart then
                 Character:PivotTo(sideCF)
@@ -1602,20 +1755,17 @@ tryTwinOnEgg = function(eggModel)
             end
         end)
     end
-    task.wait(0.15)
+    task.wait(0.12)
 
     -- ============================================================
-    -- STEP 2: SCRIPT presses DROP while standing OUTSIDE the plot
-    -- Egg must land on the ground at the side, not on the plot
+    -- STEP 2: DROP egg on the side (outside plot)
     -- ============================================================
-    setFarmStatus("Twin STEP2 → DROPPING egg on side")
+    setFarmStatus("Twin STEP2 → DROP on side")
     for _ = 1, 12 do
         pressDropButton()
         task.wait(0.07)
     end
     task.wait(TWIN_DROP_WAIT)
-
-    -- Keep character on the side while egg drops
     getCharacter()
     if RootPart then
         pcall(function()
@@ -1628,16 +1778,16 @@ tryTwinOnEgg = function(eggModel)
     end
 
     -- ============================================================
-    -- STEP 3: SCRIPT re-grabs the egg that is now on the ground
+    -- STEP 3: Re-grab the dropped egg
     -- ============================================================
-    setFarmStatus("Twin STEP3 → Re-grabbing dropped egg")
+    setFarmStatus("Twin STEP3 → Re-grab")
     reGrabAtSide()
     task.wait(TWIN_REGRAB_WAIT)
 
     -- ============================================================
-    -- STEP 4: NOW go onto the plot and place/claim (you keep the egg)
+    -- STEP 4: Onto plot + place/claim (you keep the egg)
     -- ============================================================
-    setFarmStatus("Twin STEP4 → Onto plot (claim for you)")
+    setFarmStatus("Twin STEP4 → Plot claim")
     getCharacter()
     if not Character or not RootPart then return false, "Character lost" end
     local okCenter = safeTeleport(Character, RootPart, centerCF)
@@ -1652,7 +1802,6 @@ tryTwinOnEgg = function(eggModel)
     end
     task.wait(TWIN_SETTLE)
 
-    -- Place / nest / claim prompts on the plot
     local prompts, clicks = {}, {}
     for _, desc in ipairs(plot:GetDescendants()) do
         if desc:IsA("ProximityPrompt") then
@@ -1670,7 +1819,6 @@ tryTwinOnEgg = function(eggModel)
         end
     end
 
-    setFarmStatus("Twin STEP5 → Placing / claiming for you")
     local finishAt = os.clock() + TWIN_INTERACT_TIME
     while os.clock() < finishAt do
         for _, prompt in ipairs(prompts) do
@@ -1967,4 +2115,4 @@ Close.MouseButton1Click:Connect(shutdown)
 
 showStatus("Online  •  Watching for new Eggs", 2)
 setFarmStatus("Idle")
-print("[JHAYDEE] Compact Chilli Hub style + functional buttons + improved Twin loaded")
+print("[JHAYDEE HUB] Loaded – Twin side-drop + functional buttons")
